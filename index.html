@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gradii — Gradient & Color Palette Studio</title>
+<meta name="description" content="Design gradients, mesh gradients, and color palettes, extract colors from images, simulate colorblindness, share via link, and export as PNG, CSS, SCSS, Tailwind, ASE, GPL, JSON or text.">
+<meta name="theme-color" content="#6d5dfc">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><defs><linearGradient id=%22g%22 x1=%220%25%22 y1=%220%25%22 x2=%22100%25%22 y2=%22100%25%22><stop offset=%220%25%22 stop-color=%22%236d5dfc%22/><stop offset=%22100%25%22 stop-color=%22%23ff6b9d%22/></linearGradient></defs><rect width=%22100%22 height=%22100%22 rx=%2224%22 fill=%22url(%23g)%22/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="bg-orbs" aria-hidden="true">
+  <span class="orb orb-1"></span>
+  <span class="orb orb-2"></span>
+  <span class="orb orb-3"></span>
+</div>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Gradii</span>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="Studio sections">
+      <button class="tab-btn active" data-tab="gradient" role="tab" aria-selected="true">Gradients</button>
+      <button class="tab-btn" data-tab="palette" role="tab" aria-selected="false">Palettes</button>
+      <button class="tab-btn" data-tab="mesh" role="tab" aria-selected="false">Mesh</button>
+      <button class="tab-btn" data-tab="image" role="tab" aria-selected="false">Image Extract</button>
+    </nav>
+
+    <div class="topbar-actions">
+      <select id="visionSelect" class="select" title="Simulate color vision deficiency">
+        <option value="normal">👁 Normal vision</option>
+        <option value="protanopia">👁 Protanopia</option>
+        <option value="deuteranopia">👁 Deuteranopia</option>
+        <option value="tritanopia">👁 Tritanopia</option>
+        <option value="achromatopsia">👁 Achromatopsia</option>
+      </select>
+      <button id="btnEyedropperInfo" class="icon-btn" title="Space bar generates a new random design" aria-hidden="true">⌨</button>
+      <button id="themeToggle" class="icon-btn" title="Toggle light / dark theme">🌙</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ GRADIENT STUDIO ============ -->
+    <section id="panel-gradient" class="panel active" role="tabpanel">
+      <div class="studio gradient-studio">
+
+        <div class="preview-col">
+          <div class="preview-frame">
+            <div id="gradientPreview" class="gradient-preview"></div>
+          </div>
+
+          <div class="preview-actions">
+            <button id="btnRandomGradient" class="btn btn-primary">🎲 Randomize</button>
+            <button id="btnCopyCss" class="btn">📋 Copy CSS</button>
+            <button id="btnShareGradient" class="btn">🔗 Share</button>
+            <button id="btnDownloadPng" class="btn">⬇ PNG</button>
+            <div class="dropdown">
+              <button id="btnExportGradient" class="btn">⬇ More ▾</button>
+              <div class="dropdown-menu" id="gradientExportMenu">
+                <button data-export="css">CSS File</button>
+                <button data-export="scss">SCSS Variable</button>
+                <button data-export="tailwind">Tailwind Class</button>
+              </div>
+            </div>
+          </div>
+
+          <pre id="cssOutput" class="css-output" title="Click to copy"></pre>
+        </div>
+
+        <div class="controls-col">
+          <div class="control-card">
+            <label class="control-label">Type</label>
+            <div class="segmented" id="gradientTypeSeg">
+              <button data-type="linear" class="seg-btn active">Linear</button>
+              <button data-type="radial" class="seg-btn">Radial</button>
+              <button data-type="conic" class="seg-btn">Conic</button>
+            </div>
+          </div>
+
+          <div class="control-card" id="angleControl">
+            <label class="control-label">Angle <span id="angleValue" class="control-value">90°</span></label>
+            <input type="range" id="angleSlider" min="0" max="360" value="90" class="slider">
+          </div>
+
+          <div class="control-card" id="shapeControl" hidden>
+            <label class="control-label">Shape</label>
+            <div class="segmented" id="shapeSeg">
+              <button data-shape="circle" class="seg-btn">Circle</button>
+              <button data-shape="ellipse" class="seg-btn active">Ellipse</button>
+            </div>
+          </div>
+
+          <div class="control-card" id="positionControl" hidden>
+            <label class="control-label">Center X <span id="posXValue" class="control-value">50%</span></label>
+            <input type="range" id="posXSlider" min="0" max="100" value="50" class="slider">
+            <label class="control-label">Center Y <span id="posYValue" class="control-value">50%</span></label>
+            <input type="range" id="posYSlider" min="0" max="100" value="50" class="slider">
+          </div>
+
+          <div class="control-card">
+            <div class="control-label-row">
+              <label class="control-label">Color Stops</label>
+              <button id="btnAddStop" class="btn btn-sm">+ Add</button>
+            </div>
+            <div id="stopsList" class="stops-list"></div>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label">Presets</label>
+            <div id="presetsGrid" class="presets-grid"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PALETTE STUDIO ============ -->
+    <section id="panel-palette" class="panel" role="tabpanel">
+      <div class="studio palette-studio">
+        <div class="palette-toolbar">
+          <div class="toolbar-group">
+            <label class="control-label">Colors <span id="paletteCountValue" class="control-value">5</span></label>
+            <input type="range" id="paletteCountSlider" min="3" max="8" value="5" class="slider slider-sm">
+          </div>
+
+          <div class="toolbar-group">
+            <label class="control-label">Harmony</label>
+            <select id="harmonySelect" class="select">
+              <option value="random">Random</option>
+              <option value="monochromatic">Monochromatic</option>
+              <option value="analogous">Analogous</option>
+              <option value="complementary">Complementary</option>
+              <option value="splitComplementary">Split Complementary</option>
+              <option value="triadic">Triadic</option>
+              <option value="tetradic">Tetradic</option>
+              <option value="shades">Shades</option>
+            </select>
+          </div>
+
+          <button id="btnGeneratePalette" class="btn btn-primary">🎲 Generate <kbd>Space</kbd></button>
+          <button id="btnSavePalette" class="btn">★ Save</button>
+          <button id="btnSharePalette" class="btn">🔗 Share</button>
+          <button id="btnCopyAllHex" class="btn">📋 Copy All</button>
+
+          <div class="dropdown">
+            <button id="btnExportPalette" class="btn">⬇ Export ▾</button>
+            <div class="dropdown-menu" id="exportMenu">
+              <button data-export="png">PNG Image</button>
+              <button data-export="css">CSS Variables</button>
+              <button data-export="scss">SCSS Variables</button>
+              <button data-export="tailwind">Tailwind Config</button>
+              <button data-export="ase">Adobe ASE</button>
+              <button data-export="gpl">GIMP Palette</button>
+              <button data-export="json">JSON</button>
+              <button data-export="text">Text File</button>
+            </div>
+          </div>
+        </div>
+
+        <p class="hint">Click a swatch's hex to copy it · click the lock to keep a color when regenerating · click the color chip to fine‑tune it.</p>
+
+        <div id="paletteSwatches" class="palette-swatches"></div>
+
+        <div class="saved-section">
+          <h3 class="saved-title">Saved Palettes</h3>
+          <div id="savedPalettes" class="saved-palettes">
+            <p class="empty-hint" id="savedEmptyHint">No saved palettes yet — hit ★ Save to keep one here.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MESH GRADIENT STUDIO ============ -->
+    <section id="panel-mesh" class="panel" role="tabpanel">
+      <div class="studio mesh-studio">
+        <div class="preview-col">
+          <div class="preview-frame">
+            <div id="meshPreview" class="gradient-preview mesh-preview"></div>
+          </div>
+          <div class="preview-actions">
+            <button id="btnRandomMesh" class="btn btn-primary">🎲 Randomize</button>
+            <button id="btnCopyMeshCss" class="btn">📋 Copy CSS</button>
+            <button id="btnShareMesh" class="btn">🔗 Share</button>
+            <button id="btnDownloadMeshPng" class="btn">⬇ PNG</button>
+          </div>
+          <pre id="meshCssOutput" class="css-output" title="Click to copy"></pre>
+        </div>
+
+        <div class="controls-col">
+          <div class="control-card">
+            <label class="control-label">Blobs <span id="meshCountValue" class="control-value">5</span></label>
+            <input type="range" id="meshCountSlider" min="3" max="8" value="5" class="slider">
+          </div>
+          <div class="control-card">
+            <label class="control-label">Softness <span id="meshSoftnessValue" class="control-value">60%</span></label>
+            <input type="range" id="meshSoftnessSlider" min="30" max="90" value="60" class="slider">
+          </div>
+          <p class="hint">A mesh gradient layers several soft color blobs for an organic, "Stripe-style" background. Randomize until one clicks, then export it.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ IMAGE EXTRACTOR ============ -->
+    <section id="panel-image" class="panel" role="tabpanel">
+      <div class="studio image-studio">
+        <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="Upload an image">
+          <div class="drop-zone-icon">🖼</div>
+          <p><strong>Drag & drop</strong> an image here, or click to browse</p>
+          <p class="drop-zone-sub">We extract the dominant colors right in your browser — nothing is uploaded anywhere.</p>
+          <input type="file" id="imageInput" accept="image/*" hidden>
+        </div>
+
+        <div class="image-preview-wrap" id="imagePreviewWrap" hidden>
+          <img id="imagePreview" alt="Uploaded image preview">
+        </div>
+
+        <div id="extractedPalette" class="palette-swatches"></div>
+
+        <div class="image-actions" id="imageActions" hidden>
+          <button id="btnSendToPalette" class="btn btn-primary">Send to Palette Studio →</button>
+          <button id="btnAnotherImage" class="btn">Choose another image</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span>Gradii — built for designers who like their colors on tap.</span>
+  </footer>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<canvas id="exportCanvas" style="display:none"></canvas>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="filter-protanopia">
+      <feColorMatrix type="matrix" values="0.567 0.433 0 0 0
+                                            0.558 0.442 0 0 0
+                                            0     0.242 0.758 0 0
+                                            0     0     0 1 0"/>
+    </filter>
+    <filter id="filter-deuteranopia">
+      <feColorMatrix type="matrix" values="0.625 0.375 0 0 0
+                                            0.7   0.3   0 0 0
+                                            0     0.3   0.7 0 0
+                                            0     0     0 1 0"/>
+    </filter>
+    <filter id="filter-tritanopia">
+      <feColorMatrix type="matrix" values="0.95  0.05  0     0 0
+                                            0     0.433 0.567 0 0
+                                            0     0.475 0.525 0 0
+                                            0     0     0     1 0"/>
+    </filter>
+  </defs>
+</svg>
+
+<script src="app.js"></script>
+</body>
+</html>
