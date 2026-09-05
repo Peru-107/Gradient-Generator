@@ -163,7 +163,14 @@ body {
   box-shadow: 0 4px 12px rgba(109, 93, 252, 0.35);
 }
 
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+#visionSelect {
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  width: auto;
+}
 
 .icon-btn {
   width: 40px; height: 40px;
@@ -649,9 +656,39 @@ body {
   margin-top: 40px;
 }
 
+/* ---------------- mesh studio ---------------- */
+.mesh-studio { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; align-items: start; }
+.mesh-preview { position: relative; }
+
+/* ---------------- colorblindness simulation ---------------- */
+[data-vision="protanopia"] #gradientPreview,
+[data-vision="protanopia"] .preset-swatch,
+[data-vision="protanopia"] .swatch,
+[data-vision="protanopia"] .mesh-preview {
+  filter: url(#filter-protanopia);
+}
+[data-vision="deuteranopia"] #gradientPreview,
+[data-vision="deuteranopia"] .preset-swatch,
+[data-vision="deuteranopia"] .swatch,
+[data-vision="deuteranopia"] .mesh-preview {
+  filter: url(#filter-deuteranopia);
+}
+[data-vision="tritanopia"] #gradientPreview,
+[data-vision="tritanopia"] .preset-swatch,
+[data-vision="tritanopia"] .swatch,
+[data-vision="tritanopia"] .mesh-preview {
+  filter: url(#filter-tritanopia);
+}
+[data-vision="achromatopsia"] #gradientPreview,
+[data-vision="achromatopsia"] .preset-swatch,
+[data-vision="achromatopsia"] .swatch,
+[data-vision="achromatopsia"] .mesh-preview {
+  filter: grayscale(1);
+}
+
 /* ---------------- responsive ---------------- */
 @media (max-width: 900px) {
-  .gradient-studio { grid-template-columns: 1fr; }
+  .gradient-studio, .mesh-studio { grid-template-columns: 1fr; }
   .preview-col { position: static; }
 }
 

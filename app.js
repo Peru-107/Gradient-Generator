@@ -196,6 +196,21 @@ themeToggle.addEventListener('click', () => {
 });
 
 /* ==========================================================================
+   Color vision simulation
+   ========================================================================== */
+
+const visionSelect = document.getElementById('visionSelect');
+(function initVision() {
+  const saved = localStorage.getItem('gradii_vision') || 'normal';
+  visionSelect.value = saved;
+  document.documentElement.setAttribute('data-vision', saved);
+})();
+visionSelect.addEventListener('change', () => {
+  document.documentElement.setAttribute('data-vision', visionSelect.value);
+  localStorage.setItem('gradii_vision', visionSelect.value);
+});
+
+/* ==========================================================================
    GRADIENT STUDIO
    ========================================================================== */
 
@@ -498,11 +513,35 @@ document.getElementById('btnDownloadPng').addEventListener('click', () => {
   showToast('Gradient PNG downloaded');
 });
 
-document.getElementById('btnDownloadCss').addEventListener('click', () => {
+const gradientExportMenu = document.getElementById('gradientExportMenu');
+document.getElementById('btnExportGradient').addEventListener('click', (e) => {
+  e.stopPropagation();
+  gradientExportMenu.classList.toggle('open');
+});
+document.addEventListener('click', () => gradientExportMenu.classList.remove('open'));
+
+function tailwindArbitraryValue(css) {
+  return css.replace(/\s+/g, '_').replace(/,/g, ',');
+}
+
+gradientExportMenu.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-export]');
+  if (!btn) return;
   const css = buildGradientCss(gradientState);
-  const content = `.gradient {\n  width: 100%;\n  height: 100%;\n  background: ${css};\n}\n`;
-  downloadBlob(content, 'gradient.css', 'text/css');
-  showToast('CSS file downloaded');
+  if (btn.dataset.export === 'css') {
+    downloadBlob(`.gradient {\n  width: 100%;\n  height: 100%;\n  background: ${css};\n}\n`, 'gradient.css', 'text/css');
+    showToast('CSS file downloaded');
+  } else if (btn.dataset.export === 'scss') {
+    downloadBlob(`$gradient: ${css};\n`, 'gradient.scss', 'text/x-scss');
+    showToast('SCSS file downloaded');
+  } else if (btn.dataset.export === 'tailwind') {
+    copyText(`bg-[${tailwindArbitraryValue(css)}]`, 'Tailwind class copied');
+  }
+  gradientExportMenu.classList.remove('open');
+});
+
+document.getElementById('btnShareGradient').addEventListener('click', () => {
+  copyShareLink('gradient', gradientState);
 });
 
 /* ==========================================================================
@@ -756,16 +795,200 @@ function exportPaletteAsText(colors) {
   downloadBlob(colors.join('\n') + '\n', 'palette.txt', 'text/plain');
 }
 
+function exportPaletteAsScss(colors) {
+  const vars = colors.map((c, i) => `$color-${i + 1}: ${c};`).join('\n');
+  downloadBlob(vars + '\n', 'palette.scss', 'text/x-scss');
+}
+
+function exportPaletteAsTailwind(colors) {
+  const entries = colors.map((c, i) => `        'palette-${i + 1}': '${c}',`).join('\n');
+  const content = `module.exports = {\n  theme: {\n    extend: {\n      colors: {\n${entries}\n      }\n    }\n  }\n}\n`;
+  downloadBlob(content, 'tailwind.config.js', 'text/javascript');
+}
+
+/* ---- Adobe Swatch Exchange (.ase) binary encoder ---- */
+function exportPaletteAsAse(colors) {
+  const blocks = [];
+  colors.forEach((hex, i) => {
+    const { r, g, b } = hexToRgb(hex);
+    const name = `Color ${i + 1}`;
+    const nameBytes = [];
+    for (const ch of name) nameBytes.push(ch.charCodeAt(0));
+    const nameLen = nameBytes.length + 1;
+
+    const dataParts = [];
+    const nameLenBuf = new ArrayBuffer(2);
+    new DataView(nameLenBuf).setUint16(0, nameLen, false);
+    dataParts.push(new Uint8Array(nameLenBuf));
+
+    const nameBuf = new ArrayBuffer(nameLen * 2);
+    const nameView = new DataView(nameBuf);
+    nameBytes.forEach((code, idx) => nameView.setUint16(idx * 2, code, false));
+    nameView.setUint16((nameLen - 1) * 2, 0, false);
+    dataParts.push(new Uint8Array(nameBuf));
+
+    dataParts.push(new Uint8Array([0x52, 0x47, 0x42, 0x20])); // "RGB "
+
+    const colorBuf = new ArrayBuffer(12);
+    const colorView = new DataView(colorBuf);
+    colorView.setFloat32(0, r / 255, false);
+    colorView.setFloat32(4, g / 255, false);
+    colorView.setFloat32(8, b / 255, false);
+    dataParts.push(new Uint8Array(colorBuf));
+
+    const typeBuf = new ArrayBuffer(2);
+    new DataView(typeBuf).setUint16(0, 2, false); // color type: Normal
+    dataParts.push(new Uint8Array(typeBuf));
+
+    const totalLen = dataParts.reduce((sum, p) => sum + p.length, 0);
+    const blockHeader = new ArrayBuffer(6);
+    const headerView = new DataView(blockHeader);
+    headerView.setUint16(0, 0x0001, false); // color entry block
+    headerView.setUint32(2, totalLen, false);
+    blocks.push(new Uint8Array(blockHeader));
+    dataParts.forEach(p => blocks.push(p));
+  });
+
+  const fileHeader = new ArrayBuffer(12);
+  const fh = new DataView(fileHeader);
+  fh.setUint8(0, 0x41); fh.setUint8(1, 0x53); fh.setUint8(2, 0x45); fh.setUint8(3, 0x46); // "ASEF"
+  fh.setUint16(4, 1, false);
+  fh.setUint16(6, 0, false);
+  fh.setUint32(8, colors.length, false);
+
+  const totalSize = 12 + blocks.reduce((sum, b) => sum + b.length, 0);
+  const out = new Uint8Array(totalSize);
+  out.set(new Uint8Array(fileHeader), 0);
+  let offset = 12;
+  blocks.forEach(b => { out.set(b, offset); offset += b.length; });
+
+  const blob = new Blob([out], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'palette.ase';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function exportPaletteAsGpl(colors) {
+  const lines = ['GIMP Palette', 'Name: Gradii Palette', 'Columns: 0', '#'];
+  colors.forEach((hex, i) => {
+    const { r, g, b } = hexToRgb(hex);
+    lines.push(`${String(Math.round(r)).padStart(3)} ${String(Math.round(g)).padStart(3)} ${String(Math.round(b)).padStart(3)}\tColor ${i + 1}`);
+  });
+  downloadBlob(lines.join('\n') + '\n', 'palette.gpl', 'text/plain');
+}
+
 exportMenu.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-export]');
   if (!btn) return;
   const colors = paletteState.colors;
   if (btn.dataset.export === 'png') exportPaletteAsPng(colors);
   if (btn.dataset.export === 'css') exportPaletteAsCss(colors);
+  if (btn.dataset.export === 'scss') exportPaletteAsScss(colors);
+  if (btn.dataset.export === 'tailwind') exportPaletteAsTailwind(colors);
+  if (btn.dataset.export === 'ase') exportPaletteAsAse(colors);
+  if (btn.dataset.export === 'gpl') exportPaletteAsGpl(colors);
   if (btn.dataset.export === 'json') exportPaletteAsJson(colors);
   if (btn.dataset.export === 'text') exportPaletteAsText(colors);
   exportMenu.classList.remove('open');
   showToast('Palette exported');
+});
+
+document.getElementById('btnSharePalette').addEventListener('click', () => {
+  copyShareLink('palette', paletteState);
+});
+
+/* ==========================================================================
+   MESH GRADIENT STUDIO
+   ========================================================================== */
+
+let meshState = {
+  count: 5,
+  softness: 60,
+  baseColor: '#0f1020',
+  points: [],
+};
+
+const meshPreview = document.getElementById('meshPreview');
+const meshCssOutput = document.getElementById('meshCssOutput');
+const meshCountSlider = document.getElementById('meshCountSlider');
+const meshCountValue = document.getElementById('meshCountValue');
+const meshSoftnessSlider = document.getElementById('meshSoftnessSlider');
+const meshSoftnessValue = document.getElementById('meshSoftnessValue');
+
+function randomMeshPoints(count) {
+  const baseHue = Math.random() * 360;
+  return Array.from({ length: count }, () => ({
+    x: Math.round(Math.random() * 100),
+    y: Math.round(Math.random() * 100),
+    color: hslToHex(baseHue + (Math.random() - 0.5) * 160, 55 + Math.random() * 35, 45 + Math.random() * 25),
+  }));
+}
+
+function renderMeshPreview() {
+  const layers = meshState.points
+    .map(p => `radial-gradient(circle at ${p.x}% ${p.y}%, ${p.color} 0%, transparent ${meshState.softness}%)`)
+    .join(', ');
+  meshPreview.style.backgroundColor = meshState.baseColor;
+  meshPreview.style.backgroundImage = layers;
+  const cssLayers = meshState.points
+    .map(p => `    radial-gradient(circle at ${p.x}% ${p.y}%, ${p.color} 0%, transparent ${meshState.softness}%)`)
+    .join(',\n');
+  meshCssOutput.textContent = `background-color: ${meshState.baseColor};\nbackground-image:\n${cssLayers};`;
+}
+
+function randomizeMesh() {
+  meshState.baseColor = randomHex();
+  meshState.points = randomMeshPoints(meshState.count);
+  renderMeshPreview();
+}
+
+meshCountSlider.addEventListener('input', () => {
+  meshState.count = Number(meshCountSlider.value);
+  meshCountValue.textContent = meshState.count;
+  meshState.points = randomMeshPoints(meshState.count);
+  renderMeshPreview();
+});
+
+meshSoftnessSlider.addEventListener('input', () => {
+  meshState.softness = Number(meshSoftnessSlider.value);
+  meshSoftnessValue.textContent = `${meshState.softness}%`;
+  renderMeshPreview();
+});
+
+document.getElementById('btnRandomMesh').addEventListener('click', randomizeMesh);
+document.getElementById('btnCopyMeshCss').addEventListener('click', () => copyText(meshCssOutput.textContent, 'CSS copied'));
+meshCssOutput.addEventListener('click', () => copyText(meshCssOutput.textContent, 'CSS copied'));
+document.getElementById('btnShareMesh').addEventListener('click', () => copyShareLink('mesh', meshState));
+
+function hexToRgba(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`;
+}
+
+document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
+  const canvas = document.getElementById('exportCanvas');
+  const w = 1600, h = 1000;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = meshState.baseColor;
+  ctx.fillRect(0, 0, w, h);
+  meshState.points.forEach(p => {
+    const cx = w * p.x / 100, cy = h * p.y / 100;
+    const r = (meshState.softness / 100) * Math.max(w, h) * 0.8;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, p.color);
+    grad.addColorStop(1, hexToRgba(p.color, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+  downloadCanvasPng(canvas, 'mesh-gradient.png');
+  showToast('Mesh gradient PNG downloaded');
 });
 
 /* ==========================================================================
@@ -889,6 +1112,76 @@ document.getElementById('btnSendToPalette').addEventListener('click', () => {
 document.getElementById('btnAnotherImage').addEventListener('click', () => imageInput.click());
 
 /* ==========================================================================
+   Shareable links
+   ========================================================================== */
+
+function encodeState(obj) {
+  try {
+    return encodeURIComponent(btoa(JSON.stringify(obj)));
+  } catch (e) {
+    return '';
+  }
+}
+
+function decodeState(str) {
+  try {
+    return JSON.parse(atob(decodeURIComponent(str)));
+  } catch (e) {
+    return null;
+  }
+}
+
+function copyShareLink(tab, state) {
+  const encoded = encodeState(state);
+  if (!encoded) { showToast('Could not create share link'); return; }
+  const url = `${location.origin}${location.pathname}?tab=${tab}&d=${encoded}`;
+  copyText(url, 'Share link copied');
+}
+
+function loadStateFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const tab = params.get('tab');
+  const data = params.get('d');
+  if (!tab || !data) return;
+  const state = decodeState(data);
+  if (!state) return;
+
+  if (tab === 'gradient' && state.stops) {
+    gradientState = state;
+    syncGradientControlsFromState();
+    renderStopsList();
+    renderGradientPreview();
+    setActiveTab('gradient');
+  } else if (tab === 'palette' && state.colors) {
+    paletteState = state;
+    paletteCountSlider.value = paletteState.count;
+    paletteCountValue.textContent = paletteState.count;
+    harmonySelect.value = paletteState.harmony || 'random';
+    renderPaletteSwatches();
+    setActiveTab('palette');
+  } else if (tab === 'mesh' && state.points) {
+    meshState = state;
+    meshCountSlider.value = meshState.count;
+    meshCountValue.textContent = meshState.count;
+    meshSoftnessSlider.value = meshState.softness;
+    meshSoftnessValue.textContent = `${meshState.softness}%`;
+    renderMeshPreview();
+    setActiveTab('mesh');
+  }
+  showToast('Loaded shared design');
+}
+
+/* ==========================================================================
+   Progressive Web App: service worker registration
+   ========================================================================== */
+
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* offline install unavailable */ });
+  });
+}
+
+/* ==========================================================================
    Keyboard shortcuts
    ========================================================================== */
 
@@ -899,6 +1192,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (activeTab === 'palette') generatePalette();
     else if (activeTab === 'gradient') randomizeGradient();
+    else if (activeTab === 'mesh') randomizeMesh();
   }
 });
 
@@ -916,6 +1210,11 @@ function init() {
   paletteState.colors = generatePaletteColors('random', paletteState.count, [], paletteState.locked);
   renderPaletteSwatches();
   renderSavedPalettes();
+
+  meshState.points = randomMeshPoints(meshState.count);
+  renderMeshPreview();
+
+  loadStateFromUrl();
 }
 
 init();
