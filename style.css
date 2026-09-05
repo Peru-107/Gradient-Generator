@@ -660,6 +660,68 @@ body {
 .mesh-studio { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; align-items: start; }
 .mesh-preview { position: relative; }
 
+.mesh-base-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mesh-base-row input[type="color"] {
+  width: 40px; height: 40px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+  background: none;
+}
+
+.mesh-blobs-list { gap: 14px; }
+
+.mesh-blob-row {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+
+.mesh-blob-color {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  align-self: start;
+}
+
+.mesh-blob-fields { display: flex; flex-direction: column; gap: 6px; }
+
+.mesh-blob-field {
+  display: grid;
+  grid-template-columns: 34px 1fr 40px;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.mesh-blob-field input[type="range"] {
+  margin: 0;
+}
+
+.mesh-blob-remove {
+  justify-self: end;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.mesh-blob-remove:hover { background: #ff5c72; color: #fff; }
+
 /* ---------------- colorblindness simulation ---------------- */
 [data-vision="protanopia"] #gradientPreview,
 [data-vision="protanopia"] .preset-swatch,

@@ -17,7 +17,9 @@ Open `index.html` in any modern browser to use it, or run a local server (`pytho
 
 ### Mesh Gradient Studio
 - Organic, "Stripe-style" mesh gradients built from layered soft color blobs
-- Adjustable blob count and softness
+- Full per-blob control: color, X/Y position, and size, with add/remove (3–10 blobs)
+- Manual base color picker and 8 blend modes (screen, multiply, overlay, difference, and more)
+- 8 curated mesh presets to start from
 - Randomizer, live CSS output, PNG export, and shareable links
 
 ### Palette Studio

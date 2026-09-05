@@ -906,57 +906,203 @@ document.getElementById('btnSharePalette').addEventListener('click', () => {
    MESH GRADIENT STUDIO
    ========================================================================== */
 
+const MESH_PRESETS = [
+  { name: 'Aurora', baseColor: '#0b1026', blendMode: 'screen', points: [
+    { x: 15, y: 20, size: 65, color: '#00f2fe' }, { x: 80, y: 15, size: 60, color: '#7b2ff7' },
+    { x: 50, y: 70, size: 70, color: '#22d3c5' }, { x: 85, y: 80, size: 55, color: '#4facfe' },
+  ] },
+  { name: 'Candy Cloud', baseColor: '#fff5f8', blendMode: 'normal', points: [
+    { x: 20, y: 30, size: 65, color: '#ff9a9e' }, { x: 75, y: 20, size: 60, color: '#fbc2eb' },
+    { x: 50, y: 75, size: 70, color: '#a18cd1' }, { x: 85, y: 70, size: 55, color: '#fecfef' },
+  ] },
+  { name: 'Sunset Blur', baseColor: '#1a0f2e', blendMode: 'screen', points: [
+    { x: 20, y: 25, size: 60, color: '#ff512f' }, { x: 75, y: 20, size: 65, color: '#f09819' },
+    { x: 50, y: 75, size: 70, color: '#ff4b8b' }, { x: 85, y: 75, size: 55, color: '#ffd200' },
+  ] },
+  { name: 'Deep Space', baseColor: '#000000', blendMode: 'screen', points: [
+    { x: 15, y: 20, size: 55, color: '#3f2b96' }, { x: 80, y: 25, size: 60, color: '#a8c0ff' },
+    { x: 50, y: 80, size: 65, color: '#654ea3' }, { x: 85, y: 80, size: 50, color: '#eaafc8' },
+  ] },
+  { name: 'Citrus', baseColor: '#fffdf5', blendMode: 'multiply', points: [
+    { x: 20, y: 25, size: 60, color: '#f7971e' }, { x: 78, y: 20, size: 60, color: '#ffd200' },
+    { x: 50, y: 78, size: 65, color: '#a8ff78' }, { x: 85, y: 75, size: 55, color: '#78ffd6' },
+  ] },
+  { name: 'Northern Lights', baseColor: '#04121a', blendMode: 'screen', points: [
+    { x: 20, y: 15, size: 60, color: '#43cea2' }, { x: 75, y: 25, size: 65, color: '#185a9d' },
+    { x: 45, y: 75, size: 70, color: '#00c9ff' }, { x: 85, y: 80, size: 50, color: '#92fe9d' },
+  ] },
+  { name: 'Bubblegum', baseColor: '#0f0f1a', blendMode: 'overlay', points: [
+    { x: 25, y: 25, size: 65, color: '#ff6b9d' }, { x: 75, y: 20, size: 60, color: '#845ef7' },
+    { x: 50, y: 75, size: 70, color: '#22d3c5' }, { x: 85, y: 75, size: 55, color: '#ffd43b' },
+  ] },
+  { name: 'Molten', baseColor: '#0a0505', blendMode: 'screen', points: [
+    { x: 20, y: 25, size: 60, color: '#f12711' }, { x: 78, y: 20, size: 60, color: '#f5af19' },
+    { x: 50, y: 78, size: 68, color: '#eb3349' }, { x: 85, y: 78, size: 52, color: '#f45c43' },
+  ] },
+];
+
 let meshState = {
-  count: 5,
-  softness: 60,
   baseColor: '#0f1020',
+  blendMode: 'normal',
   points: [],
 };
 
 const meshPreview = document.getElementById('meshPreview');
 const meshCssOutput = document.getElementById('meshCssOutput');
-const meshCountSlider = document.getElementById('meshCountSlider');
-const meshCountValue = document.getElementById('meshCountValue');
-const meshSoftnessSlider = document.getElementById('meshSoftnessSlider');
-const meshSoftnessValue = document.getElementById('meshSoftnessValue');
+const meshBaseColorInput = document.getElementById('meshBaseColorInput');
+const meshBaseColorHex = document.getElementById('meshBaseColorHex');
+const meshBlendSelect = document.getElementById('meshBlendSelect');
+const meshBlobsList = document.getElementById('meshBlobsList');
+const meshPresetsGrid = document.getElementById('meshPresetsGrid');
+
+const MESH_COMPOSITE_MAP = {
+  normal: 'source-over',
+  screen: 'screen',
+  multiply: 'multiply',
+  overlay: 'overlay',
+  difference: 'difference',
+  'color-dodge': 'color-dodge',
+  'hard-light': 'hard-light',
+  'soft-light': 'soft-light',
+};
 
 function randomMeshPoints(count) {
   const baseHue = Math.random() * 360;
   return Array.from({ length: count }, () => ({
     x: Math.round(Math.random() * 100),
     y: Math.round(Math.random() * 100),
+    size: Math.round(45 + Math.random() * 35),
     color: hslToHex(baseHue + (Math.random() - 0.5) * 160, 55 + Math.random() * 35, 45 + Math.random() * 25),
   }));
 }
 
+function buildMeshCssLayers(state) {
+  return state.points
+    .map(p => `radial-gradient(circle at ${p.x}% ${p.y}%, ${p.color} 0%, transparent ${p.size}%)`);
+}
+
 function renderMeshPreview() {
-  const layers = meshState.points
-    .map(p => `radial-gradient(circle at ${p.x}% ${p.y}%, ${p.color} 0%, transparent ${meshState.softness}%)`)
-    .join(', ');
+  const layers = buildMeshCssLayers(meshState);
   meshPreview.style.backgroundColor = meshState.baseColor;
-  meshPreview.style.backgroundImage = layers;
-  const cssLayers = meshState.points
-    .map(p => `    radial-gradient(circle at ${p.x}% ${p.y}%, ${p.color} 0%, transparent ${meshState.softness}%)`)
-    .join(',\n');
-  meshCssOutput.textContent = `background-color: ${meshState.baseColor};\nbackground-image:\n${cssLayers};`;
+  meshPreview.style.backgroundImage = layers.join(', ');
+  meshPreview.style.backgroundBlendMode = meshState.blendMode;
+  meshBaseColorInput.value = meshState.baseColor;
+  meshBaseColorHex.textContent = meshState.baseColor.toUpperCase();
+  meshBlendSelect.value = meshState.blendMode;
+
+  const cssLayers = layers.map(l => `    ${l}`).join(',\n');
+  meshCssOutput.textContent =
+    `background-color: ${meshState.baseColor};\n` +
+    `background-image:\n${cssLayers};\n` +
+    `background-blend-mode: ${meshState.blendMode};`;
+}
+
+function renderMeshBlobsList() {
+  meshBlobsList.innerHTML = '';
+  meshState.points.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.className = 'mesh-blob-row';
+    row.innerHTML = `
+      <input type="color" class="mesh-blob-color" value="${p.color}" aria-label="Blob color">
+      <div class="mesh-blob-fields">
+        <div class="mesh-blob-field">
+          <span>X</span>
+          <input type="range" class="mesh-blob-x" min="0" max="100" value="${p.x}">
+          <span class="mesh-blob-x-value">${p.x}%</span>
+        </div>
+        <div class="mesh-blob-field">
+          <span>Y</span>
+          <input type="range" class="mesh-blob-y" min="0" max="100" value="${p.y}">
+          <span class="mesh-blob-y-value">${p.y}%</span>
+        </div>
+        <div class="mesh-blob-field">
+          <span>Size</span>
+          <input type="range" class="mesh-blob-size" min="20" max="90" value="${p.size}">
+          <span class="mesh-blob-size-value">${p.size}%</span>
+        </div>
+      </div>
+      <button class="mesh-blob-remove" title="Remove blob" ${meshState.points.length <= 3 ? 'disabled' : ''}>✕</button>
+    `;
+    row.querySelector('.mesh-blob-color').addEventListener('input', (e) => {
+      p.color = e.target.value;
+      renderMeshPreview();
+    });
+    row.querySelector('.mesh-blob-x').addEventListener('input', (e) => {
+      p.x = Number(e.target.value);
+      row.querySelector('.mesh-blob-x-value').textContent = `${p.x}%`;
+      renderMeshPreview();
+    });
+    row.querySelector('.mesh-blob-y').addEventListener('input', (e) => {
+      p.y = Number(e.target.value);
+      row.querySelector('.mesh-blob-y-value').textContent = `${p.y}%`;
+      renderMeshPreview();
+    });
+    row.querySelector('.mesh-blob-size').addEventListener('input', (e) => {
+      p.size = Number(e.target.value);
+      row.querySelector('.mesh-blob-size-value').textContent = `${p.size}%`;
+      renderMeshPreview();
+    });
+    row.querySelector('.mesh-blob-remove').addEventListener('click', () => {
+      if (meshState.points.length <= 3) return;
+      meshState.points.splice(i, 1);
+      renderMeshBlobsList();
+      renderMeshPreview();
+    });
+    meshBlobsList.appendChild(row);
+  });
+}
+
+function renderMeshPresets() {
+  meshPresetsGrid.innerHTML = '';
+  MESH_PRESETS.forEach(preset => {
+    const el = document.createElement('div');
+    el.className = 'preset-swatch';
+    el.title = preset.name;
+    const layers = preset.points.map(p => `radial-gradient(circle at ${p.x}% ${p.y}%, ${p.color} 0%, transparent ${p.size}%)`).join(', ');
+    el.style.backgroundColor = preset.baseColor;
+    el.style.backgroundImage = layers;
+    el.style.backgroundBlendMode = preset.blendMode;
+    el.addEventListener('click', () => {
+      meshState = {
+        baseColor: preset.baseColor,
+        blendMode: preset.blendMode,
+        points: preset.points.map(p => ({ ...p })),
+      };
+      renderMeshBlobsList();
+      renderMeshPreview();
+      showToast(`Loaded "${preset.name}"`);
+    });
+    meshPresetsGrid.appendChild(el);
+  });
 }
 
 function randomizeMesh() {
   meshState.baseColor = randomHex();
-  meshState.points = randomMeshPoints(meshState.count);
+  meshState.points = randomMeshPoints(meshState.points.length || 5);
+  renderMeshBlobsList();
   renderMeshPreview();
 }
 
-meshCountSlider.addEventListener('input', () => {
-  meshState.count = Number(meshCountSlider.value);
-  meshCountValue.textContent = meshState.count;
-  meshState.points = randomMeshPoints(meshState.count);
+document.getElementById('btnAddBlob').addEventListener('click', () => {
+  if (meshState.points.length >= 10) { showToast('Maximum 10 blobs'); return; }
+  const baseHue = meshState.points.length ? hexToHsl(meshState.points[0].color).h : Math.random() * 360;
+  meshState.points.push({
+    x: Math.round(Math.random() * 100),
+    y: Math.round(Math.random() * 100),
+    size: 55,
+    color: hslToHex(baseHue + (Math.random() - 0.5) * 160, 60, 55),
+  });
+  renderMeshBlobsList();
   renderMeshPreview();
 });
 
-meshSoftnessSlider.addEventListener('input', () => {
-  meshState.softness = Number(meshSoftnessSlider.value);
-  meshSoftnessValue.textContent = `${meshState.softness}%`;
+meshBaseColorInput.addEventListener('input', () => {
+  meshState.baseColor = meshBaseColorInput.value;
+  renderMeshPreview();
+});
+
+meshBlendSelect.addEventListener('change', () => {
+  meshState.blendMode = meshBlendSelect.value;
   renderMeshPreview();
 });
 
@@ -976,17 +1122,20 @@ document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
+  ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = meshState.baseColor;
   ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = MESH_COMPOSITE_MAP[meshState.blendMode] || 'source-over';
   meshState.points.forEach(p => {
     const cx = w * p.x / 100, cy = h * p.y / 100;
-    const r = (meshState.softness / 100) * Math.max(w, h) * 0.8;
+    const r = (p.size / 100) * Math.max(w, h) * 0.8;
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
     grad.addColorStop(0, p.color);
     grad.addColorStop(1, hexToRgba(p.color, 0));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
   });
+  ctx.globalCompositeOperation = 'source-over';
   downloadCanvasPng(canvas, 'mesh-gradient.png');
   showToast('Mesh gradient PNG downloaded');
 });
@@ -1161,10 +1310,7 @@ function loadStateFromUrl() {
     setActiveTab('palette');
   } else if (tab === 'mesh' && state.points) {
     meshState = state;
-    meshCountSlider.value = meshState.count;
-    meshCountValue.textContent = meshState.count;
-    meshSoftnessSlider.value = meshState.softness;
-    meshSoftnessValue.textContent = `${meshState.softness}%`;
+    renderMeshBlobsList();
     renderMeshPreview();
     setActiveTab('mesh');
   }
@@ -1211,7 +1357,9 @@ function init() {
   renderPaletteSwatches();
   renderSavedPalettes();
 
-  meshState.points = randomMeshPoints(meshState.count);
+  meshState.points = randomMeshPoints(5);
+  renderMeshBlobsList();
+  renderMeshPresets();
   renderMeshPreview();
 
   loadStateFromUrl();
