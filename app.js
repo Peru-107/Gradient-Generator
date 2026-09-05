@@ -1,0 +1,921 @@
+'use strict';
+
+/* ==========================================================================
+   Color utilities
+   ========================================================================== */
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function hexToRgb(hex) {
+  hex = hex.replace('#', '').trim();
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  const num = parseInt(hex, 16) || 0;
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(x => clamp(Math.round(x), 0, 255).toString(16).padStart(2, '0')).join('');
+}
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) {
+    h = s = 0;
+  } else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      default: h = (r - g) / d + 4;
+    }
+    h /= 6;
+  }
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  s = clamp(s, 0, 100) / 100;
+  l = clamp(l, 0, 100) / 100;
+  let r, g, b;
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return { r: r * 255, g: g * 255, b: b * 255 };
+}
+
+function hexToHsl(hex) { const { r, g, b } = hexToRgb(hex); return rgbToHsl(r, g, b); }
+function hslToHex(h, s, l) { const { r, g, b } = hslToRgb(h, s, l); return rgbToHex(r, g, b); }
+
+function isValidHex(hex) { return /^#?[0-9a-f]{6}$/i.test(hex); }
+function normalizeHex(hex) { return isValidHex(hex) ? ('#' + hex.replace('#', '')).toLowerCase() : null; }
+
+function randomHex() {
+  const h = Math.random() * 360;
+  const s = 55 + Math.random() * 35;
+  const l = 40 + Math.random() * 35;
+  return hslToHex(h, s, l);
+}
+
+function relLuminance(r, g, b) {
+  const a = [r, g, b].map(v => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
+}
+
+function contrastRatio(hex1, hex2) {
+  const c1 = hexToRgb(hex1), c2 = hexToRgb(hex2);
+  const l1 = relLuminance(c1.r, c1.g, c1.b) + 0.05;
+  const l2 = relLuminance(c2.r, c2.g, c2.b) + 0.05;
+  return l1 > l2 ? l1 / l2 : l2 / l1;
+}
+
+function bestTextColor(hex) {
+  return contrastRatio(hex, '#000000') >= contrastRatio(hex, '#ffffff') ? '#000000' : '#ffffff';
+}
+
+function contrastLabel(ratio) {
+  if (ratio >= 7) return 'AAA';
+  if (ratio >= 4.5) return 'AA';
+  if (ratio >= 3) return 'AA18';
+  return 'Fail';
+}
+
+/* ==========================================================================
+   Shared helpers: toast, clipboard, downloads
+   ========================================================================== */
+
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
+}
+
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e2) { /* ignore */ }
+    document.body.removeChild(ta);
+  }
+  showToast(label || 'Copied to clipboard');
+}
+
+function downloadBlob(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function downloadCanvasPng(canvas, filename) {
+  canvas.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }, 'image/png');
+}
+
+/* ==========================================================================
+   Tabs
+   ========================================================================== */
+
+let activeTab = 'gradient';
+const tabButtons = document.querySelectorAll('.tab-btn');
+tabButtons.forEach(btn => {
+  btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+});
+
+function setActiveTab(tab) {
+  activeTab = tab;
+  tabButtons.forEach(b => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + tab).classList.add('active');
+}
+
+/* ==========================================================================
+   Theme toggle
+   ========================================================================== */
+
+const themeToggle = document.getElementById('themeToggle');
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  themeToggle.textContent = theme === 'dark' ? '☀' : '🌙';
+  localStorage.setItem('gradii_theme', theme);
+}
+(function initTheme() {
+  const saved = localStorage.getItem('gradii_theme');
+  const preferred = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  applyTheme(preferred);
+})();
+themeToggle.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+});
+
+/* ==========================================================================
+   GRADIENT STUDIO
+   ========================================================================== */
+
+const GRADIENT_PRESETS = [
+  { name: 'Sunset', stops: ['#ff512f', '#f09819'], angle: 120 },
+  { name: 'Ocean', stops: ['#2193b0', '#6dd5ed'], angle: 135 },
+  { name: 'Candy', stops: ['#ff9a9e', '#fecfef'], angle: 135 },
+  { name: 'Mojito', stops: ['#1d976c', '#93f9b9'], angle: 120 },
+  { name: 'Instagram', stops: ['#833ab4', '#fd1d1d', '#fcb045'], angle: 135 },
+  { name: 'Cosmic', stops: ['#ff00cc', '#333399'], angle: 110 },
+  { name: 'Peach', stops: ['#ed4264', '#ffedbc'], angle: 135 },
+  { name: 'Midnight City', stops: ['#232526', '#414345'], angle: 135 },
+  { name: 'Aqua Marine', stops: ['#1a2980', '#26d0ce'], angle: 135 },
+  { name: 'Grape', stops: ['#8e2de2', '#4a00e0'], angle: 135 },
+  { name: 'Lush', stops: ['#56ab2f', '#a8e063'], angle: 120 },
+  { name: 'Fire', stops: ['#f12711', '#f5af19'], angle: 135 },
+  { name: 'Royal', stops: ['#141e30', '#243b55'], angle: 135 },
+  { name: 'Bloom', stops: ['#dd5e89', '#f7bb97'], angle: 120 },
+  { name: 'Emerald', stops: ['#43cea2', '#185a9d'], angle: 135 },
+  { name: 'Cherry', stops: ['#eb3349', '#f45c43'], angle: 135 },
+  { name: 'Sky', stops: ['#00c6ff', '#0072ff'], angle: 135 },
+  { name: 'Flamingo', stops: ['#f78ca0', '#f9748f', '#fd868c', '#fe9a8b'], angle: 135 },
+  { name: 'Rose Gold', stops: ['#b76e79', '#f6d9d3'], angle: 135 },
+  { name: 'Cotton Candy', stops: ['#a18cd1', '#fbc2eb'], angle: 135 },
+  { name: 'Lime', stops: ['#a8ff78', '#78ffd6'], angle: 120 },
+  { name: 'Blush', stops: ['#ff9a9e', '#fad0c4', '#fbc2eb'], angle: 135 },
+  { name: 'Nebula', stops: ['#654ea3', '#eaafc8'], angle: 130 },
+  { name: 'Amber', stops: ['#f7971e', '#ffd200'], angle: 120 },
+  { name: 'Deep Sea', type: 'radial', stops: ['#000428', '#004e92'] },
+  { name: 'Solar Flare', type: 'conic', stops: ['#ff512f', '#f09819', '#ff512f'], angle: 0 },
+];
+
+let gradientState = {
+  type: 'linear',
+  angle: 90,
+  shape: 'ellipse',
+  posX: 50,
+  posY: 50,
+  stops: [
+    { color: '#6d5dfc', pos: 0 },
+    { color: '#ff6b9d', pos: 100 },
+  ],
+};
+
+const gradientPreview = document.getElementById('gradientPreview');
+const cssOutput = document.getElementById('cssOutput');
+const angleControl = document.getElementById('angleControl');
+const shapeControl = document.getElementById('shapeControl');
+const positionControl = document.getElementById('positionControl');
+const angleSlider = document.getElementById('angleSlider');
+const angleValue = document.getElementById('angleValue');
+const posXSlider = document.getElementById('posXSlider');
+const posYSlider = document.getElementById('posYSlider');
+const posXValue = document.getElementById('posXValue');
+const posYValue = document.getElementById('posYValue');
+const stopsList = document.getElementById('stopsList');
+const presetsGrid = document.getElementById('presetsGrid');
+
+function buildGradientCss(state) {
+  const stops = [...state.stops].sort((a, b) => a.pos - b.pos);
+  const stopsStr = stops.map(s => `${s.color} ${Math.round(s.pos)}%`).join(', ');
+  if (state.type === 'linear') return `linear-gradient(${state.angle}deg, ${stopsStr})`;
+  if (state.type === 'radial') return `radial-gradient(${state.shape} at ${state.posX}% ${state.posY}%, ${stopsStr})`;
+  return `conic-gradient(from ${state.angle}deg at ${state.posX}% ${state.posY}%, ${stopsStr})`;
+}
+
+function renderGradientPreview() {
+  const css = buildGradientCss(gradientState);
+  gradientPreview.style.background = css;
+  cssOutput.textContent = `background: ${css};`;
+}
+
+function renderControlVisibility() {
+  angleControl.hidden = gradientState.type === 'radial';
+  shapeControl.hidden = gradientState.type !== 'radial';
+  positionControl.hidden = gradientState.type === 'linear';
+  angleControl.querySelector('.control-label').firstChild.textContent =
+    gradientState.type === 'conic' ? 'Start Angle ' : 'Angle ';
+}
+
+function renderStopsList() {
+  stopsList.innerHTML = '';
+  gradientState.stops.forEach((stop, i) => {
+    const row = document.createElement('div');
+    row.className = 'stop-row';
+    row.innerHTML = `
+      <input type="color" class="stop-color" value="${stop.color}" aria-label="Stop color">
+      <input type="text" class="stop-hex" value="${stop.color.toUpperCase()}" maxlength="7" aria-label="Stop hex">
+      <input type="range" class="stop-pos" min="0" max="100" value="${stop.pos}" aria-label="Stop position">
+      <span class="stop-pos-value">${Math.round(stop.pos)}%</span>
+      <button class="stop-remove" title="Remove stop" ${gradientState.stops.length <= 2 ? 'disabled' : ''}>✕</button>
+    `;
+    const colorInput = row.querySelector('.stop-color');
+    const hexInput = row.querySelector('.stop-hex');
+    const posInput = row.querySelector('.stop-pos');
+    const posValue = row.querySelector('.stop-pos-value');
+    const removeBtn = row.querySelector('.stop-remove');
+
+    colorInput.addEventListener('input', () => {
+      stop.color = colorInput.value;
+      hexInput.value = colorInput.value.toUpperCase();
+      renderGradientPreview();
+    });
+    hexInput.addEventListener('change', () => {
+      const norm = normalizeHex(hexInput.value);
+      if (norm) {
+        stop.color = norm;
+        colorInput.value = norm;
+        hexInput.value = norm.toUpperCase();
+        renderGradientPreview();
+      } else {
+        hexInput.value = stop.color.toUpperCase();
+      }
+    });
+    posInput.addEventListener('input', () => {
+      stop.pos = Number(posInput.value);
+      posValue.textContent = `${stop.pos}%`;
+      renderGradientPreview();
+    });
+    removeBtn.addEventListener('click', () => {
+      if (gradientState.stops.length <= 2) return;
+      gradientState.stops.splice(i, 1);
+      renderStopsList();
+      renderGradientPreview();
+    });
+
+    stopsList.appendChild(row);
+  });
+}
+
+function addGradientStop() {
+  if (gradientState.stops.length >= 8) { showToast('Maximum 8 stops'); return; }
+  const sorted = [...gradientState.stops].sort((a, b) => a.pos - b.pos);
+  let bestGap = -1, gapPos = 50;
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const gap = sorted[i + 1].pos - sorted[i].pos;
+    if (gap > bestGap) { bestGap = gap; gapPos = (sorted[i].pos + sorted[i + 1].pos) / 2; }
+  }
+  gradientState.stops.push({ color: randomHex(), pos: Math.round(gapPos) });
+  renderStopsList();
+  renderGradientPreview();
+}
+
+function randomizeGradient() {
+  const count = clamp(gradientState.stops.length, 2, 5);
+  const baseHue = Math.random() * 360;
+  const spread = 40 + Math.random() * 60;
+  gradientState.stops = Array.from({ length: count }, (_, i) => {
+    const h = baseHue + (i - (count - 1) / 2) * (spread / Math.max(1, count - 1));
+    const s = 55 + Math.random() * 35;
+    const l = 40 + Math.random() * 30;
+    return { color: hslToHex(h, s, l), pos: Math.round((i / (count - 1)) * 100) };
+  });
+  if (gradientState.type === 'linear') gradientState.angle = Math.round(Math.random() * 360);
+  if (gradientState.type === 'radial' || gradientState.type === 'conic') {
+    gradientState.posX = Math.round(20 + Math.random() * 60);
+    gradientState.posY = Math.round(20 + Math.random() * 60);
+  }
+  syncGradientControlsFromState();
+  renderStopsList();
+  renderGradientPreview();
+}
+
+function syncGradientControlsFromState() {
+  angleSlider.value = gradientState.angle;
+  angleValue.textContent = `${gradientState.angle}°`;
+  posXSlider.value = gradientState.posX;
+  posYSlider.value = gradientState.posY;
+  posXValue.textContent = `${gradientState.posX}%`;
+  posYValue.textContent = `${gradientState.posY}%`;
+  document.querySelectorAll('#gradientTypeSeg .seg-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.type === gradientState.type));
+  document.querySelectorAll('#shapeSeg .seg-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.shape === gradientState.shape));
+  renderControlVisibility();
+}
+
+document.getElementById('gradientTypeSeg').addEventListener('click', e => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  gradientState.type = btn.dataset.type;
+  syncGradientControlsFromState();
+  renderGradientPreview();
+});
+
+document.getElementById('shapeSeg').addEventListener('click', e => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  gradientState.shape = btn.dataset.shape;
+  syncGradientControlsFromState();
+  renderGradientPreview();
+});
+
+angleSlider.addEventListener('input', () => {
+  gradientState.angle = Number(angleSlider.value);
+  angleValue.textContent = `${gradientState.angle}°`;
+  renderGradientPreview();
+});
+posXSlider.addEventListener('input', () => {
+  gradientState.posX = Number(posXSlider.value);
+  posXValue.textContent = `${gradientState.posX}%`;
+  renderGradientPreview();
+});
+posYSlider.addEventListener('input', () => {
+  gradientState.posY = Number(posYSlider.value);
+  posYValue.textContent = `${gradientState.posY}%`;
+  renderGradientPreview();
+});
+
+document.getElementById('btnAddStop').addEventListener('click', addGradientStop);
+document.getElementById('btnRandomGradient').addEventListener('click', randomizeGradient);
+document.getElementById('btnCopyCss').addEventListener('click', () => copyText(cssOutput.textContent, 'CSS copied'));
+cssOutput.addEventListener('click', () => copyText(cssOutput.textContent, 'CSS copied'));
+
+function renderPresets() {
+  presetsGrid.innerHTML = '';
+  GRADIENT_PRESETS.forEach(preset => {
+    const el = document.createElement('div');
+    el.className = 'preset-swatch';
+    el.title = preset.name;
+    const type = preset.type || 'linear';
+    const angle = preset.angle ?? 135;
+    const stopsStr = preset.stops.map((c, i) => `${c} ${Math.round((i / (preset.stops.length - 1)) * 100)}%`).join(', ');
+    el.style.background = type === 'radial'
+      ? `radial-gradient(ellipse at 50% 50%, ${stopsStr})`
+      : type === 'conic'
+        ? `conic-gradient(from ${angle}deg at 50% 50%, ${stopsStr})`
+        : `linear-gradient(${angle}deg, ${stopsStr})`;
+    el.addEventListener('click', () => {
+      gradientState = {
+        type,
+        angle,
+        shape: 'ellipse',
+        posX: 50,
+        posY: 50,
+        stops: preset.stops.map((c, i) => ({ color: c, pos: Math.round((i / (preset.stops.length - 1)) * 100) })),
+      };
+      syncGradientControlsFromState();
+      renderStopsList();
+      renderGradientPreview();
+      showToast(`Loaded "${preset.name}"`);
+    });
+    presetsGrid.appendChild(el);
+  });
+}
+
+/* ---- canvas rendering for export ---- */
+
+function linearGradientEndpoints(w, h, angleDeg) {
+  const angle = ((angleDeg % 360) + 360) % 360;
+  const rad = angle * Math.PI / 180;
+  const length = Math.abs(w * Math.sin(rad)) + Math.abs(h * Math.cos(rad));
+  const half = length / 2;
+  const cx = w / 2, cy = h / 2;
+  const dx = Math.sin(rad) * half;
+  const dy = -Math.cos(rad) * half;
+  return { x1: cx - dx, y1: cy - dy, x2: cx + dx, y2: cy + dy };
+}
+
+function drawGradientToCanvas(ctx, w, h, state) {
+  const stops = [...state.stops].sort((a, b) => a.pos - b.pos);
+  let grad;
+  if (state.type === 'linear') {
+    const { x1, y1, x2, y2 } = linearGradientEndpoints(w, h, state.angle);
+    grad = ctx.createLinearGradient(x1, y1, x2, y2);
+  } else if (state.type === 'radial') {
+    const cx = w * state.posX / 100, cy = h * state.posY / 100;
+    const r = Math.max(
+      Math.hypot(cx, cy), Math.hypot(w - cx, cy),
+      Math.hypot(cx, h - cy), Math.hypot(w - cx, h - cy)
+    );
+    grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  } else if (typeof ctx.createConicGradient === 'function') {
+    const cx = w * state.posX / 100, cy = h * state.posY / 100;
+    const startRad = (state.angle - 90) * Math.PI / 180;
+    grad = ctx.createConicGradient(startRad, cx, cy);
+  } else {
+    showToast('Conic export not supported in this browser — using a linear fallback');
+    const { x1, y1, x2, y2 } = linearGradientEndpoints(w, h, 90);
+    grad = ctx.createLinearGradient(x1, y1, x2, y2);
+  }
+  const uniquePositions = new Set();
+  stops.forEach(s => {
+    let pos = clamp(s.pos / 100, 0, 1);
+    while (uniquePositions.has(pos)) pos = clamp(pos + 0.0001, 0, 1);
+    uniquePositions.add(pos);
+    grad.addColorStop(pos, s.color);
+  });
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+}
+
+document.getElementById('btnDownloadPng').addEventListener('click', () => {
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = 1600;
+  canvas.height = 1000;
+  const ctx = canvas.getContext('2d');
+  drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
+  downloadCanvasPng(canvas, 'gradient.png');
+  showToast('Gradient PNG downloaded');
+});
+
+document.getElementById('btnDownloadCss').addEventListener('click', () => {
+  const css = buildGradientCss(gradientState);
+  const content = `.gradient {\n  width: 100%;\n  height: 100%;\n  background: ${css};\n}\n`;
+  downloadBlob(content, 'gradient.css', 'text/css');
+  showToast('CSS file downloaded');
+});
+
+/* ==========================================================================
+   PALETTE STUDIO
+   ========================================================================== */
+
+let paletteState = {
+  count: 5,
+  harmony: 'random',
+  colors: [],
+  locked: [],
+};
+
+const paletteSwatchesEl = document.getElementById('paletteSwatches');
+const paletteCountSlider = document.getElementById('paletteCountSlider');
+const paletteCountValue = document.getElementById('paletteCountValue');
+const harmonySelect = document.getElementById('harmonySelect');
+const savedPalettesEl = document.getElementById('savedPalettes');
+const savedEmptyHint = document.getElementById('savedEmptyHint');
+
+function generatePaletteColors(harmony, count, existingColors, locked) {
+  const lockedIndex = locked.findIndex(l => l);
+  const baseHue = lockedIndex >= 0 ? hexToHsl(existingColors[lockedIndex]).h : Math.random() * 360;
+  let hues;
+  switch (harmony) {
+    case 'monochromatic':
+    case 'shades':
+      hues = Array(count).fill(baseHue);
+      break;
+    case 'analogous':
+      hues = Array.from({ length: count }, (_, i) => baseHue + (i - (count - 1) / 2) * 22);
+      break;
+    case 'complementary':
+      hues = Array.from({ length: count }, (_, i) => (i % 2 === 0 ? baseHue : baseHue + 180));
+      break;
+    case 'splitComplementary':
+      hues = Array.from({ length: count }, (_, i) => {
+        const m = i % 3;
+        return m === 0 ? baseHue : m === 1 ? baseHue + 150 : baseHue + 210;
+      });
+      break;
+    case 'triadic':
+      hues = Array.from({ length: count }, (_, i) => baseHue + (i % 3) * 120);
+      break;
+    case 'tetradic':
+      hues = Array.from({ length: count }, (_, i) => baseHue + (i % 4) * 90);
+      break;
+    default:
+      hues = Array.from({ length: count }, () => Math.random() * 360);
+  }
+  return hues.map((h, i) => {
+    if (locked[i] && existingColors[i]) return existingColors[i];
+    let s, l;
+    if (harmony === 'shades') {
+      s = 55 + Math.random() * 25;
+      l = 12 + (i / Math.max(1, count - 1)) * 76;
+    } else if (harmony === 'monochromatic') {
+      s = 35 + Math.random() * 45;
+      l = 18 + (i / Math.max(1, count - 1)) * 64;
+    } else {
+      s = 52 + Math.random() * 38;
+      l = 32 + Math.random() * 38;
+    }
+    return hslToHex(h, s, l);
+  });
+}
+
+function ensurePaletteArrays() {
+  while (paletteState.colors.length < paletteState.count) {
+    paletteState.colors.push(randomHex());
+    paletteState.locked.push(false);
+  }
+  paletteState.colors = paletteState.colors.slice(0, paletteState.count);
+  paletteState.locked = paletteState.locked.slice(0, paletteState.count);
+}
+
+function generatePalette() {
+  ensurePaletteArrays();
+  paletteState.colors = generatePaletteColors(paletteState.harmony, paletteState.count, paletteState.colors, paletteState.locked);
+  renderPaletteSwatches();
+}
+
+function renderPaletteSwatches() {
+  paletteSwatchesEl.innerHTML = '';
+  paletteState.colors.forEach((color, i) => {
+    const textColor = bestTextColor(color);
+    const whiteRatio = contrastRatio(color, '#ffffff');
+    const blackRatio = contrastRatio(color, '#000000');
+    const locked = paletteState.locked[i];
+
+    const el = document.createElement('div');
+    el.className = 'swatch';
+    el.style.background = color;
+    el.style.color = textColor;
+    el.innerHTML = `
+      <div class="swatch-top">
+        <button class="lock-btn" title="${locked ? 'Unlock' : 'Lock'}" aria-label="Toggle lock">${locked ? '🔒' : '🔓'}</button>
+        <button class="eyedrop-btn" title="Pick color from screen" aria-label="Eyedropper">💧</button>
+      </div>
+      <div class="swatch-info">
+        <input type="color" class="swatch-color-input" value="${color}" aria-label="Edit color">
+        <span class="swatch-hex" title="Click to copy">${color.toUpperCase()}</span>
+        <div class="swatch-contrast">
+          <span class="badge" style="background:#fff;color:#111">white ${contrastLabel(whiteRatio)}</span>
+          <span class="badge" style="background:#111;color:#fff">black ${contrastLabel(blackRatio)}</span>
+        </div>
+      </div>
+    `;
+
+    el.querySelector('.lock-btn').addEventListener('click', () => {
+      paletteState.locked[i] = !paletteState.locked[i];
+      renderPaletteSwatches();
+    });
+
+    el.querySelector('.swatch-hex').addEventListener('click', () => copyText(color.toUpperCase(), `${color.toUpperCase()} copied`));
+
+    el.querySelector('.swatch-color-input').addEventListener('input', (e) => {
+      paletteState.colors[i] = e.target.value;
+      paletteState.locked[i] = true;
+      renderPaletteSwatches();
+    });
+
+    const eyedropBtn = el.querySelector('.eyedrop-btn');
+    if (!('EyeDropper' in window)) {
+      eyedropBtn.style.display = 'none';
+    } else {
+      eyedropBtn.addEventListener('click', async () => {
+        try {
+          const result = await new window.EyeDropper().open();
+          paletteState.colors[i] = result.sRGBHex;
+          paletteState.locked[i] = true;
+          renderPaletteSwatches();
+        } catch (e) { /* user cancelled */ }
+      });
+    }
+
+    paletteSwatchesEl.appendChild(el);
+  });
+}
+
+paletteCountSlider.addEventListener('input', () => {
+  paletteState.count = Number(paletteCountSlider.value);
+  paletteCountValue.textContent = paletteState.count;
+  ensurePaletteArrays();
+  renderPaletteSwatches();
+});
+
+harmonySelect.addEventListener('change', () => {
+  paletteState.harmony = harmonySelect.value;
+  generatePalette();
+});
+
+document.getElementById('btnGeneratePalette').addEventListener('click', generatePalette);
+
+document.getElementById('btnCopyAllHex').addEventListener('click', () => {
+  copyText(paletteState.colors.map(c => c.toUpperCase()).join(', '), 'All hex codes copied');
+});
+
+/* ---- saved palettes ---- */
+
+function getSavedPalettes() {
+  try { return JSON.parse(localStorage.getItem('gradii_saved_palettes') || '[]'); }
+  catch (e) { return []; }
+}
+
+function setSavedPalettes(list) {
+  localStorage.setItem('gradii_saved_palettes', JSON.stringify(list));
+}
+
+function renderSavedPalettes() {
+  const list = getSavedPalettes();
+  savedEmptyHint.style.display = list.length ? 'none' : 'block';
+  savedPalettesEl.querySelectorAll('.saved-item').forEach(n => n.remove());
+  list.forEach(item => {
+    const el = document.createElement('div');
+    el.className = 'saved-item';
+    el.title = 'Click to load, or click ✕ to remove';
+    item.colors.forEach(c => {
+      const chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.style.background = c;
+      el.appendChild(chip);
+    });
+    const del = document.createElement('button');
+    del.className = 'saved-delete';
+    del.textContent = '✕';
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setSavedPalettes(getSavedPalettes().filter(p => p.id !== item.id));
+      renderSavedPalettes();
+    });
+    el.appendChild(del);
+    el.addEventListener('click', () => {
+      paletteState.count = item.colors.length;
+      paletteState.colors = [...item.colors];
+      paletteState.locked = item.colors.map(() => false);
+      paletteCountSlider.value = paletteState.count;
+      paletteCountValue.textContent = paletteState.count;
+      renderPaletteSwatches();
+      showToast('Palette loaded');
+    });
+    savedPalettesEl.appendChild(el);
+  });
+}
+
+document.getElementById('btnSavePalette').addEventListener('click', () => {
+  const list = getSavedPalettes();
+  list.unshift({ id: Date.now(), colors: [...paletteState.colors] });
+  setSavedPalettes(list.slice(0, 24));
+  renderSavedPalettes();
+  showToast('Palette saved');
+});
+
+/* ---- export dropdown ---- */
+
+const exportMenu = document.getElementById('exportMenu');
+document.getElementById('btnExportPalette').addEventListener('click', (e) => {
+  e.stopPropagation();
+  exportMenu.classList.toggle('open');
+});
+document.addEventListener('click', () => exportMenu.classList.remove('open'));
+
+function exportPaletteAsPng(colors) {
+  const canvas = document.getElementById('exportCanvas');
+  const w = 1200, h = 360;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const swatchW = w / colors.length;
+  colors.forEach((color, i) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(i * swatchW, 0, swatchW, h);
+    ctx.fillStyle = bestTextColor(color);
+    ctx.font = '600 22px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(color.toUpperCase(), i * swatchW + swatchW / 2, h - 30);
+  });
+  downloadCanvasPng(canvas, 'palette.png');
+}
+
+function exportPaletteAsCss(colors) {
+  const vars = colors.map((c, i) => `  --color-${i + 1}: ${c};`).join('\n');
+  downloadBlob(`:root {\n${vars}\n}\n`, 'palette.css', 'text/css');
+}
+
+function exportPaletteAsJson(colors) {
+  downloadBlob(JSON.stringify({ colors }, null, 2), 'palette.json', 'application/json');
+}
+
+function exportPaletteAsText(colors) {
+  downloadBlob(colors.join('\n') + '\n', 'palette.txt', 'text/plain');
+}
+
+exportMenu.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-export]');
+  if (!btn) return;
+  const colors = paletteState.colors;
+  if (btn.dataset.export === 'png') exportPaletteAsPng(colors);
+  if (btn.dataset.export === 'css') exportPaletteAsCss(colors);
+  if (btn.dataset.export === 'json') exportPaletteAsJson(colors);
+  if (btn.dataset.export === 'text') exportPaletteAsText(colors);
+  exportMenu.classList.remove('open');
+  showToast('Palette exported');
+});
+
+/* ==========================================================================
+   IMAGE COLOR EXTRACTOR
+   ========================================================================== */
+
+const dropZone = document.getElementById('dropZone');
+const imageInput = document.getElementById('imageInput');
+const imagePreviewWrap = document.getElementById('imagePreviewWrap');
+const imagePreview = document.getElementById('imagePreview');
+const extractedPaletteEl = document.getElementById('extractedPalette');
+const imageActions = document.getElementById('imageActions');
+let extractedColors = [];
+
+dropZone.addEventListener('click', () => imageInput.click());
+dropZone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') imageInput.click(); });
+['dragover', 'dragenter'].forEach(evt => dropZone.addEventListener(evt, (e) => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+}));
+['dragleave', 'drop'].forEach(evt => dropZone.addEventListener(evt, (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+}));
+dropZone.addEventListener('drop', (e) => {
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) handleImageFile(file);
+});
+imageInput.addEventListener('change', () => {
+  if (imageInput.files[0]) handleImageFile(imageInput.files[0]);
+});
+
+function handleImageFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    imagePreview.src = e.target.result;
+    imagePreviewWrap.hidden = false;
+    imagePreview.onload = () => {
+      extractedColors = extractDominantColors(imagePreview, 6);
+      renderExtractedPalette();
+      imageActions.hidden = false;
+    };
+  };
+  reader.readAsDataURL(file);
+}
+
+function extractDominantColors(imgEl, numColors) {
+  const maxDim = 150;
+  const scale = Math.min(1, maxDim / Math.max(imgEl.naturalWidth, imgEl.naturalHeight));
+  const w = Math.max(1, Math.round(imgEl.naturalWidth * scale));
+  const h = Math.max(1, Math.round(imgEl.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(imgEl, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+
+  const buckets = new Map();
+  const shift = 4;
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    if (alpha < 128) continue;
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const key = ((r >> shift) << 8) | ((g >> shift) << 4) | (b >> shift);
+    const bucket = buckets.get(key) || { r: 0, g: 0, b: 0, count: 0 };
+    bucket.r += r; bucket.g += g; bucket.b += b; bucket.count++;
+    buckets.set(key, bucket);
+  }
+
+  const averaged = [...buckets.values()]
+    .map(b => ({ r: b.r / b.count, g: b.g / b.count, b: b.b / b.count, count: b.count }))
+    .sort((a, b) => b.count - a.count);
+
+  const result = [];
+  const threshold = 42;
+  for (const c of averaged) {
+    if (result.length >= numColors) break;
+    const tooClose = result.some(r => Math.hypot(r.r - c.r, r.g - c.g, r.b - c.b) < threshold);
+    if (!tooClose) result.push(c);
+  }
+  let i = 0;
+  while (result.length < numColors && i < averaged.length) {
+    if (!result.includes(averaged[i])) result.push(averaged[i]);
+    i++;
+  }
+  return result.slice(0, numColors).map(c => rgbToHex(c.r, c.g, c.b));
+}
+
+function renderExtractedPalette() {
+  extractedPaletteEl.innerHTML = '';
+  extractedColors.forEach(color => {
+    const textColor = bestTextColor(color);
+    const el = document.createElement('div');
+    el.className = 'swatch';
+    el.style.background = color;
+    el.style.color = textColor;
+    el.innerHTML = `
+      <div class="swatch-top"></div>
+      <div class="swatch-info">
+        <span class="swatch-hex" title="Click to copy">${color.toUpperCase()}</span>
+      </div>
+    `;
+    el.querySelector('.swatch-hex').addEventListener('click', () => copyText(color.toUpperCase(), `${color.toUpperCase()} copied`));
+    extractedPaletteEl.appendChild(el);
+  });
+}
+
+document.getElementById('btnSendToPalette').addEventListener('click', () => {
+  const count = clamp(extractedColors.length, 3, 8);
+  paletteState.count = count;
+  paletteState.colors = extractedColors.slice(0, count);
+  paletteState.locked = paletteState.colors.map(() => false);
+  paletteCountSlider.value = count;
+  paletteCountValue.textContent = count;
+  renderPaletteSwatches();
+  setActiveTab('palette');
+  showToast('Sent to Palette Studio');
+});
+
+document.getElementById('btnAnotherImage').addEventListener('click', () => imageInput.click());
+
+/* ==========================================================================
+   Keyboard shortcuts
+   ========================================================================== */
+
+document.addEventListener('keydown', (e) => {
+  const tag = document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (activeTab === 'palette') generatePalette();
+    else if (activeTab === 'gradient') randomizeGradient();
+  }
+});
+
+/* ==========================================================================
+   Init
+   ========================================================================== */
+
+function init() {
+  syncGradientControlsFromState();
+  renderStopsList();
+  renderGradientPreview();
+  renderPresets();
+
+  ensurePaletteArrays();
+  paletteState.colors = generatePaletteColors('random', paletteState.count, [], paletteState.locked);
+  renderPaletteSwatches();
+  renderSavedPalettes();
+}
+
+init();
