@@ -32,6 +32,7 @@
       <button class="tab-btn active" data-tab="gradient" role="tab" aria-selected="true">Gradients</button>
       <button class="tab-btn" data-tab="palette" role="tab" aria-selected="false">Palettes</button>
       <button class="tab-btn" data-tab="mesh" role="tab" aria-selected="false">Mesh</button>
+      <button class="tab-btn" data-tab="wallpaper" role="tab" aria-selected="false">Wallpaper</button>
       <button class="tab-btn" data-tab="image" role="tab" aria-selected="false">Image Extract</button>
     </nav>
 
@@ -233,6 +234,73 @@
           </div>
 
           <p class="hint">A mesh gradient layers several soft color blobs for an organic, "Stripe-style" background. Drag each blob's X/Y/size, pick a blend mode, and randomize until one clicks.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ WALLPAPER STUDIO ============ -->
+    <section id="panel-wallpaper" class="panel" role="tabpanel">
+      <div class="studio wallpaper-studio">
+        <div class="preview-col">
+          <div class="preview-frame">
+            <canvas id="wallpaperCanvas" class="wallpaper-canvas"></canvas>
+          </div>
+
+          <div class="preview-actions">
+            <div class="segmented segmented-inline" id="wallpaperModeSeg">
+              <button data-mode="live" class="seg-btn active">▶ Live</button>
+              <button data-mode="static" class="seg-btn">⏸ Static</button>
+            </div>
+            <button id="btnWallpaperNewFrame" class="btn" hidden>🔀 New Frame</button>
+            <button id="btnShareWallpaper" class="btn">🔗 Share</button>
+          </div>
+
+          <div class="preview-actions">
+            <select id="wallpaperResolutionSelect" class="select">
+              <option value="1170x2532">Phone (1170×2532)</option>
+              <option value="1920x1080" selected>Desktop (1920×1080)</option>
+              <option value="3840x2160">4K UHD (3840×2160)</option>
+              <option value="1080x1080">Square (1080×1080)</option>
+              <option value="3440x1440">Ultrawide (3440×1440)</option>
+            </select>
+            <button id="btnDownloadWallpaperPng" class="btn">⬇ PNG</button>
+            <button id="btnRecordWallpaper" class="btn">🎬 Record Video (6s)</button>
+            <button id="btnDownloadWallpaperHtml" class="btn">📄 Live HTML File</button>
+          </div>
+
+          <p class="hint">PNG exports at the selected resolution. Video records a 6s loop at preview size. The HTML file is a self-contained, self-playing wallpaper you can point apps like Wallpaper Engine or Lively Wallpaper at.</p>
+        </div>
+
+        <div class="controls-col">
+          <div class="control-card">
+            <label class="control-label">Pattern</label>
+            <select id="wallpaperPatternSelect" class="select">
+              <option value="flowingMesh">Flowing Mesh</option>
+              <option value="auroraFlow">Aurora Flow</option>
+              <option value="radialPulse">Radial Pulse</option>
+              <option value="conicSpin">Conic Spin</option>
+              <option value="waveBands">Wave Bands</option>
+            </select>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label">Speed <span id="wallpaperSpeedValue" class="control-value">1.0×</span></label>
+            <input type="range" id="wallpaperSpeedSlider" min="2" max="30" value="10" class="slider">
+          </div>
+
+          <div class="control-card">
+            <div class="control-label-row">
+              <label class="control-label">Colors</label>
+              <button id="btnAddWallpaperColor" class="btn btn-sm">+ Add</button>
+            </div>
+            <div id="wallpaperColorsList" class="wallpaper-colors-list"></div>
+            <button id="btnRandomWallpaperColors" class="btn btn-sm wallpaper-randomize-btn">🎲 Randomize Colors</button>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label">Presets</label>
+            <div id="wallpaperPresetsGrid" class="presets-grid"></div>
+          </div>
         </div>
       </div>
     </section>

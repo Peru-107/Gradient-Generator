@@ -22,6 +22,13 @@ Open `index.html` in any modern browser to use it, or run a local server (`pytho
 - 8 curated mesh presets to start from
 - Randomizer, live CSS output, PNG export, and shareable links
 
+### Wallpaper Studio
+- 5 animated pattern types: Flowing Mesh, Aurora Flow, Radial Pulse, Conic Spin, and Wave Bands
+- **Live** mode plays a continuous canvas animation; **Static** mode freezes a frame (with a "New Frame" reroll) for a still wallpaper
+- Adjustable speed and a 2–6 color palette per pattern, plus 8 curated presets
+- Export as a PNG at common wallpaper resolutions (phone, desktop, 4K, square, ultrawide), a recorded 6-second WebM video loop, or a **self-contained, self-playing HTML file** you can point live-wallpaper apps (Wallpaper Engine, Lively Wallpaper) at, or just open fullscreen in a browser
+- **Share** a wallpaper design via a link that encodes the full design
+
 ### Palette Studio
 - Generate 3–8 color palettes using harmony rules: random, monochromatic, analogous, complementary, split-complementary, triadic, tetradic, or shades
 - Lock colors you like and regenerate the rest — press **Space** to reroll
@@ -43,7 +50,7 @@ Open `index.html` in any modern browser to use it, or run a local server (`pytho
 ### Extras
 - Light/dark theme toggle (remembers your choice)
 - Animated, theme-aware background
-- Keyboard shortcut: **Space** randomizes the gradient, mesh, or palette depending on the active tab
+- Keyboard shortcut: **Space** randomizes the gradient, mesh, palette, or wallpaper colors depending on the active tab
 - Installable as a PWA (works offline once installed, thanks to a service worker)
 
 ## Deployment
