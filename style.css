@@ -32,7 +32,7 @@
   color-scheme: dark;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
   margin: 0;
@@ -44,9 +44,19 @@ html, body {
   transition: background 0.35s ease, color 0.35s ease;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   position: relative;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
+}
+
+button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
+.slider, input[type="range"], .dropdown-menu button {
+  touch-action: manipulation;
 }
 
 /* ---------------- animated background orbs ---------------- */
@@ -104,6 +114,10 @@ body {
   max-width: 1280px;
   margin: 0 auto;
   padding: 0 24px 60px;
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+  padding-bottom: max(60px, env(safe-area-inset-bottom));
+  padding-top: env(safe-area-inset-top);
 }
 
 .topbar {
@@ -126,10 +140,10 @@ body {
 
 .brand-mark {
   width: 30px; height: 30px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-radius: 8px;
   box-shadow: 0 4px 14px var(--shadow);
   flex-shrink: 0;
+  display: block;
 }
 
 .tabs {
@@ -173,7 +187,7 @@ body {
 }
 
 .icon-btn {
-  width: 40px; height: 40px;
+  width: 44px; height: 44px;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--bg-alt);
@@ -181,6 +195,7 @@ body {
   font-size: 1.05rem;
   display: flex; align-items: center; justify-content: center;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  flex-shrink: 0;
 }
 
 .icon-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px var(--shadow); }
@@ -188,13 +203,10 @@ body {
 #btnEyedropperInfo:hover { transform: none; box-shadow: none; }
 
 /* ---------------- panels ---------------- */
-.panel { display: none; animation: fadeIn 0.35s ease; }
+/* Panel enter/exit transitions are driven by GSAP (see animations.js); this
+   is just a reduced-motion / no-JS fallback so panels are never invisible. */
+.panel { display: none; }
 .panel.active { display: block; }
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 
 .studio { display: flex; flex-direction: column; gap: 20px; }
 
@@ -813,10 +825,48 @@ body {
   .preview-col { position: static; }
 }
 
-@media (max-width: 600px) {
-  .topbar { flex-direction: column; align-items: stretch; }
-  .tabs { justify-content: center; }
+/* Phones and small tablets: bigger touch targets, no input-zoom, tighter layout */
+@media (max-width: 640px) {
+  .app { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+
+  .topbar { flex-direction: column; align-items: stretch; gap: 12px; padding: 16px 0; }
+  .tabs { justify-content: center; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab-btn { padding: 10px 16px; font-size: 0.86rem; min-height: 40px; flex-shrink: 0; }
+  .topbar-actions { justify-content: center; flex-wrap: wrap; }
+
+  .btn { min-height: 44px; padding: 11px 16px; font-size: 0.86rem; }
+  .btn-sm { min-height: 36px; padding: 8px 14px; }
+  .seg-btn { min-height: 40px; }
+  .icon-btn { width: 44px; height: 44px; }
+
+  .select, .stop-hex, input[type="text"], #visionSelect {
+    font-size: 16px; /* prevents iOS/Android auto-zoom on focus */
+  }
+
+  .preview-actions { gap: 10px; }
+  .preview-actions .btn, .preview-actions .dropdown, .preview-actions .segmented-inline { flex: 1 1 calc(50% - 5px); }
+
+  .palette-toolbar { gap: 12px; }
+  .palette-toolbar > .btn, .palette-toolbar > .dropdown { flex: 1 1 calc(50% - 6px); }
+  .dropdown .btn { width: 100%; }
+
   .stop-row { grid-template-columns: 30px 66px 1fr 30px; }
   .stop-pos-value { display: none; }
   .swatch { min-height: 200px; }
+
+  .mesh-blob-row { grid-template-columns: 1fr; }
+  .mesh-blob-color { justify-self: start; }
+
+  .control-card { padding: 14px 16px; }
+
+  .slider { height: 8px; }
+  .slider::-webkit-slider-thumb { width: 24px; height: 24px; }
+  .slider::-moz-range-thumb { width: 24px; height: 24px; }
+}
+
+@media (max-width: 400px) {
+  .brand-name { font-size: 1.15rem; }
+  .preview-actions .btn, .preview-actions .dropdown,
+  .palette-toolbar > .btn, .palette-toolbar > .dropdown { flex: 1 1 100%; }
 }
