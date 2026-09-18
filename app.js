@@ -1141,6 +1141,434 @@ document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
 });
 
 /* ==========================================================================
+   WALLPAPER STUDIO
+   Pattern renderers below are intentionally pure (only args, no closures)
+   so they can be serialized via Function.prototype.toString() straight
+   into the standalone "Live HTML File" export — see exportWallpaperHtml().
+   ========================================================================== */
+
+function wpHexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const num = parseInt(full, 16) || 0;
+  const r = (num >> 16) & 255, g = (num >> 8) & 255, b = num & 255;
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+function wpDrawFlowingMesh(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#0f1020';
+  const blobs = colors.length > 1 ? colors.slice(1) : colors;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'screen';
+  blobs.forEach((color, i) => {
+    const n = blobs.length;
+    const phase = (i / n) * Math.PI * 2;
+    const cx = w * (0.5 + 0.32 * Math.sin(t * speed * 0.6 + phase));
+    const cy = h * (0.5 + 0.32 * Math.cos(t * speed * 0.5 + phase * 1.3));
+    const r = Math.max(w, h) * (0.35 + 0.08 * Math.sin(t * speed + i));
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, wpHexToRgba(color, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function wpDrawAuroraFlow(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#04070f';
+  const bands = colors.length > 1 ? colors.slice(1) : colors;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'screen';
+  bands.forEach((color, i) => {
+    const freq = 1.4 + i * 0.35;
+    const amp = h * (0.06 + 0.02 * i);
+    const yBase = h * (0.28 + (i / Math.max(1, bands.length - 1)) * 0.44);
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let x = 0; x <= w; x += w / 64) {
+      const y = yBase + Math.sin((x / w) * Math.PI * freq + t * speed * 1.2 + i) * amp;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, yBase - amp, 0, h);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, wpHexToRgba(color, 0));
+    ctx.fillStyle = grad;
+    ctx.fill();
+  });
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function wpDrawRadialPulse(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#050505';
+  const pulses = colors.length > 1 ? colors.slice(1) : colors;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'screen';
+  pulses.forEach((color, i) => {
+    const n = pulses.length;
+    const angle = (i / n) * Math.PI * 2 + t * speed * 0.15;
+    const dist = Math.min(w, h) * 0.22;
+    const cx = w / 2 + Math.cos(angle) * dist;
+    const cy = h / 2 + Math.sin(angle) * dist;
+    const pulse = 0.75 + 0.25 * Math.sin(t * speed * 2 + i * 1.7);
+    const r = Math.max(w, h) * 0.4 * pulse;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, wpHexToRgba(color, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function wpDrawConicSpin(ctx, w, h, t, colors, speed) {
+  const cx = w / 2, cy = h / 2;
+  const list = colors.length ? colors : ['#6d5dfc', '#ff6b9d'];
+  if (typeof ctx.createConicGradient === 'function') {
+    const grad = ctx.createConicGradient(t * speed * 0.6, cx, cy);
+    const looped = list.concat([list[0]]);
+    looped.forEach((c, i) => grad.addColorStop(i / Math.max(1, looped.length - 1), c));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  } else {
+    ctx.fillStyle = list[0];
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+function wpDrawWaveBands(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#0f1020';
+  const bands = colors.length > 1 ? colors.slice(1) : colors;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  bands.forEach((color, i) => {
+    const n = bands.length;
+    const freq = 1 + i * 0.4;
+    const amp = h * (0.05 + i * 0.015);
+    const baseline = h * (0.35 + (i / Math.max(1, n - 1)) * 0.45);
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    ctx.lineTo(0, baseline);
+    for (let x = 0; x <= w; x += w / 64) {
+      const y = baseline + Math.sin((x / w) * Math.PI * 2 * freq + t * speed * (0.6 + i * 0.2)) * amp;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, baseline);
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+}
+
+function wpDrawFrame(pattern, ctx, w, h, t, colors, speed) {
+  ctx.save();
+  if (pattern === 'auroraFlow') wpDrawAuroraFlow(ctx, w, h, t, colors, speed);
+  else if (pattern === 'radialPulse') wpDrawRadialPulse(ctx, w, h, t, colors, speed);
+  else if (pattern === 'conicSpin') wpDrawConicSpin(ctx, w, h, t, colors, speed);
+  else if (pattern === 'waveBands') wpDrawWaveBands(ctx, w, h, t, colors, speed);
+  else wpDrawFlowingMesh(ctx, w, h, t, colors, speed);
+  ctx.restore();
+}
+
+const WALLPAPER_PRESETS = [
+  { name: 'Nebula Drift', pattern: 'flowingMesh', speed: 1.0, colors: ['#05030f', '#6d5dfc', '#ff6b9d', '#22d3c5'] },
+  { name: 'Northern Lights', pattern: 'auroraFlow', speed: 0.8, colors: ['#020814', '#00f2fe', '#43cea2', '#7b2ff7'] },
+  { name: 'Heartbeat', pattern: 'radialPulse', speed: 1.4, colors: ['#0a0505', '#ff512f', '#f5af19'] },
+  { name: 'Color Wheel', pattern: 'conicSpin', speed: 0.6, colors: ['#6d5dfc', '#ff6b9d', '#ffd43b', '#22d3c5'] },
+  { name: 'Ocean Waves', pattern: 'waveBands', speed: 0.7, colors: ['#04263c', '#0077b6', '#00b4d8', '#90e0ef'] },
+  { name: 'Molten Core', pattern: 'radialPulse', speed: 1.8, colors: ['#0a0505', '#f12711', '#f5af19'] },
+  { name: 'Candy Drift', pattern: 'flowingMesh', speed: 0.9, colors: ['#1a0f1e', '#ff9a9e', '#a18cd1', '#fbc2eb'] },
+  { name: 'Citrus Spin', pattern: 'conicSpin', speed: 0.5, colors: ['#fffdf5', '#f7971e', '#ffd200', '#a8ff78'] },
+];
+
+let wallpaperState = {
+  pattern: 'flowingMesh',
+  speed: 1.0,
+  live: true,
+  colors: ['#0f1020', '#6d5dfc', '#ff6b9d', '#22d3c5'],
+};
+
+const wallpaperCanvas = document.getElementById('wallpaperCanvas');
+const wallpaperCtx = wallpaperCanvas.getContext('2d');
+const wallpaperPatternSelect = document.getElementById('wallpaperPatternSelect');
+const wallpaperSpeedSlider = document.getElementById('wallpaperSpeedSlider');
+const wallpaperSpeedValue = document.getElementById('wallpaperSpeedValue');
+const wallpaperColorsList = document.getElementById('wallpaperColorsList');
+const wallpaperPresetsGrid = document.getElementById('wallpaperPresetsGrid');
+const wallpaperModeSeg = document.getElementById('wallpaperModeSeg');
+const btnWallpaperNewFrame = document.getElementById('btnWallpaperNewFrame');
+const wallpaperResolutionSelect = document.getElementById('wallpaperResolutionSelect');
+
+let wallpaperAnimId = null;
+let wallpaperAnimStart = null;
+let wallpaperFrozenT = 0;
+
+function resizeWallpaperCanvas() {
+  const rect = wallpaperCanvas.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  wallpaperCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+  wallpaperCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+}
+
+function drawWallpaperFrame(t) {
+  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, t, wallpaperState.colors, wallpaperState.speed);
+}
+
+function wallpaperTick(ts) {
+  if (wallpaperAnimStart === null) wallpaperAnimStart = ts - wallpaperFrozenT * 1000;
+  wallpaperFrozenT = (ts - wallpaperAnimStart) / 1000;
+  drawWallpaperFrame(wallpaperFrozenT);
+  wallpaperAnimId = requestAnimationFrame(wallpaperTick);
+}
+
+function startWallpaperAnimation() {
+  if (wallpaperAnimId !== null) return;
+  wallpaperAnimStart = null;
+  wallpaperAnimId = requestAnimationFrame(wallpaperTick);
+}
+
+function stopWallpaperAnimation() {
+  if (wallpaperAnimId !== null) {
+    cancelAnimationFrame(wallpaperAnimId);
+    wallpaperAnimId = null;
+  }
+}
+
+function activateWallpaperTab() {
+  resizeWallpaperCanvas();
+  if (wallpaperState.live) startWallpaperAnimation();
+  else drawWallpaperFrame(wallpaperFrozenT);
+}
+
+function renderWallpaperColorsList() {
+  wallpaperColorsList.innerHTML = '';
+  wallpaperState.colors.forEach((color, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'wallpaper-color-chip';
+    chip.innerHTML = `
+      <input type="color" value="${color}" aria-label="Wallpaper color ${i + 1}">
+      <button class="wallpaper-color-remove" title="Remove color" ${wallpaperState.colors.length <= 2 ? 'disabled' : ''}>✕</button>
+    `;
+    chip.querySelector('input').addEventListener('input', (e) => {
+      wallpaperState.colors[i] = e.target.value;
+      if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+    });
+    chip.querySelector('.wallpaper-color-remove').addEventListener('click', () => {
+      if (wallpaperState.colors.length <= 2) return;
+      wallpaperState.colors.splice(i, 1);
+      renderWallpaperColorsList();
+      if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+    });
+    wallpaperColorsList.appendChild(chip);
+  });
+}
+
+function renderWallpaperPresets() {
+  wallpaperPresetsGrid.innerHTML = '';
+  WALLPAPER_PRESETS.forEach(preset => {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'preset-swatch';
+    canvas.width = 96;
+    canvas.height = 96;
+    canvas.title = preset.name;
+    const ctx = canvas.getContext('2d');
+    wpDrawFrame(preset.pattern, ctx, 96, 96, 0.6, preset.colors, preset.speed);
+    canvas.addEventListener('click', () => {
+      wallpaperState.pattern = preset.pattern;
+      wallpaperState.colors = [...preset.colors];
+      wallpaperState.speed = preset.speed;
+      wallpaperPatternSelect.value = preset.pattern;
+      wallpaperSpeedSlider.value = Math.round(preset.speed * 10);
+      wallpaperSpeedValue.textContent = `${preset.speed.toFixed(1)}×`;
+      renderWallpaperColorsList();
+      if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+      showToast(`Loaded "${preset.name}"`);
+    });
+    wallpaperPresetsGrid.appendChild(canvas);
+  });
+}
+
+function randomizeWallpaperColors() {
+  const n = wallpaperState.colors.length;
+  const baseHue = Math.random() * 360;
+  wallpaperState.colors = Array.from({ length: n }, (_, i) => {
+    if (i === 0) return hslToHex(baseHue, 30 + Math.random() * 20, 8 + Math.random() * 10);
+    const h = baseHue + (Math.random() - 0.5) * 150;
+    return hslToHex(h, 55 + Math.random() * 35, 45 + Math.random() * 25);
+  });
+  renderWallpaperColorsList();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+}
+
+wallpaperPatternSelect.addEventListener('change', () => {
+  wallpaperState.pattern = wallpaperPatternSelect.value;
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+});
+
+wallpaperSpeedSlider.addEventListener('input', () => {
+  wallpaperState.speed = Number(wallpaperSpeedSlider.value) / 10;
+  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+});
+
+wallpaperModeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  const live = btn.dataset.mode === 'live';
+  wallpaperState.live = live;
+  wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === btn.dataset.mode));
+  btnWallpaperNewFrame.hidden = live;
+  if (live) startWallpaperAnimation();
+  else stopWallpaperAnimation();
+});
+
+btnWallpaperNewFrame.addEventListener('click', () => {
+  wallpaperFrozenT = Math.random() * 60;
+  drawWallpaperFrame(wallpaperFrozenT);
+});
+
+document.getElementById('btnAddWallpaperColor').addEventListener('click', () => {
+  if (wallpaperState.colors.length >= 6) { showToast('Maximum 6 colors'); return; }
+  wallpaperState.colors.push(randomHex());
+  renderWallpaperColorsList();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+});
+
+document.getElementById('btnRandomWallpaperColors').addEventListener('click', randomizeWallpaperColors);
+
+document.getElementById('btnShareWallpaper').addEventListener('click', () => {
+  copyShareLink('wallpaper', wallpaperState);
+});
+
+document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () => {
+  const [wStr, hStr] = wallpaperResolutionSelect.value.split('x');
+  const w = Number(wStr), h = Number(hStr);
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed);
+  downloadCanvasPng(canvas, `wallpaper-${wStr}x${hStr}.png`);
+  showToast('Wallpaper PNG downloaded');
+});
+
+document.getElementById('btnRecordWallpaper').addEventListener('click', () => {
+  if (typeof MediaRecorder === 'undefined' || typeof wallpaperCanvas.captureStream !== 'function') {
+    showToast('Video recording not supported in this browser');
+    return;
+  }
+  const wasLive = wallpaperState.live;
+  if (!wasLive) startWallpaperAnimation();
+
+  const stream = wallpaperCanvas.captureStream(30);
+  const mimeCandidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  const mime = mimeCandidates.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m));
+
+  let recorder;
+  try {
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  } catch (e) {
+    showToast('Video recording not supported in this browser');
+    if (!wasLive) stopWallpaperAnimation();
+    return;
+  }
+
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: mime || 'video/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'wallpaper.webm';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    if (!wasLive) stopWallpaperAnimation();
+    showToast('Video downloaded');
+  };
+
+  recorder.start();
+  showToast('Recording 6s loop…');
+  setTimeout(() => recorder.stop(), 6000);
+});
+
+function exportWallpaperHtml() {
+  const functionsSrc = [wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands, wpDrawFrame]
+    .map(fn => fn.toString())
+    .join('\n\n');
+  const stateJson = JSON.stringify({
+    pattern: wallpaperState.pattern,
+    colors: wallpaperState.colors,
+    speed: wallpaperState.speed,
+  });
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Gradii Live Wallpaper</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const wallpaperData = ${stateJson};
+
+${functionsSrc}
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(window.innerWidth * dpr);
+  canvas.height = Math.round(window.innerHeight * dpr);
+}
+resize();
+window.addEventListener('resize', resize);
+let start = null;
+function loop(ts) {
+  if (start === null) start = ts;
+  const t = (ts - start) / 1000;
+  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, wallpaperData.speed);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+`;
+  downloadBlob(html, 'gradii-live-wallpaper.html', 'text/html');
+}
+
+document.getElementById('btnDownloadWallpaperHtml').addEventListener('click', () => {
+  exportWallpaperHtml();
+  showToast('Live wallpaper HTML downloaded');
+});
+
+tabButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.tab === 'wallpaper') activateWallpaperTab();
+    else stopWallpaperAnimation();
+  });
+});
+
+/* ==========================================================================
    IMAGE COLOR EXTRACTOR
    ========================================================================== */
 
@@ -1313,6 +1741,16 @@ function loadStateFromUrl() {
     renderMeshBlobsList();
     renderMeshPreview();
     setActiveTab('mesh');
+  } else if (tab === 'wallpaper' && state.pattern && state.colors) {
+    wallpaperState = state;
+    wallpaperPatternSelect.value = wallpaperState.pattern;
+    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
+    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+    wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', (b.dataset.mode === 'live') === wallpaperState.live));
+    btnWallpaperNewFrame.hidden = wallpaperState.live;
+    renderWallpaperColorsList();
+    setActiveTab('wallpaper');
+    activateWallpaperTab();
   }
   showToast('Loaded shared design');
 }
@@ -1339,6 +1777,7 @@ document.addEventListener('keydown', (e) => {
     if (activeTab === 'palette') generatePalette();
     else if (activeTab === 'gradient') randomizeGradient();
     else if (activeTab === 'mesh') randomizeMesh();
+    else if (activeTab === 'wallpaper') randomizeWallpaperColors();
   }
 });
 
@@ -1361,6 +1800,9 @@ function init() {
   renderMeshBlobsList();
   renderMeshPresets();
   renderMeshPreview();
+
+  renderWallpaperColorsList();
+  renderWallpaperPresets();
 
   loadStateFromUrl();
 }

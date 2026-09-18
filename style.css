@@ -722,35 +722,94 @@ body {
 }
 .mesh-blob-remove:hover { background: #ff5c72; color: #fff; }
 
+/* ---------------- wallpaper studio ---------------- */
+.wallpaper-studio { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; align-items: start; }
+
+.wallpaper-canvas {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  display: block;
+  border-radius: calc(var(--radius-lg) - 6px);
+  background: #000;
+}
+
+.segmented-inline {
+  width: auto;
+  min-width: 160px;
+}
+
+.wallpaper-colors-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.wallpaper-color-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-soft);
+  border-radius: 999px;
+  padding: 4px 8px 4px 4px;
+}
+
+.wallpaper-color-chip input[type="color"] {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+  background: none;
+}
+
+.wallpaper-color-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.65rem;
+  line-height: 1;
+}
+.wallpaper-color-remove:hover { background: #ff5c72; color: #fff; }
+
+.wallpaper-randomize-btn { width: 100%; }
+
 /* ---------------- colorblindness simulation ---------------- */
 [data-vision="protanopia"] #gradientPreview,
 [data-vision="protanopia"] .preset-swatch,
 [data-vision="protanopia"] .swatch,
-[data-vision="protanopia"] .mesh-preview {
+[data-vision="protanopia"] .mesh-preview,
+[data-vision="protanopia"] .wallpaper-canvas {
   filter: url(#filter-protanopia);
 }
 [data-vision="deuteranopia"] #gradientPreview,
 [data-vision="deuteranopia"] .preset-swatch,
 [data-vision="deuteranopia"] .swatch,
-[data-vision="deuteranopia"] .mesh-preview {
+[data-vision="deuteranopia"] .mesh-preview,
+[data-vision="deuteranopia"] .wallpaper-canvas {
   filter: url(#filter-deuteranopia);
 }
 [data-vision="tritanopia"] #gradientPreview,
 [data-vision="tritanopia"] .preset-swatch,
 [data-vision="tritanopia"] .swatch,
-[data-vision="tritanopia"] .mesh-preview {
+[data-vision="tritanopia"] .mesh-preview,
+[data-vision="tritanopia"] .wallpaper-canvas {
   filter: url(#filter-tritanopia);
 }
 [data-vision="achromatopsia"] #gradientPreview,
 [data-vision="achromatopsia"] .preset-swatch,
 [data-vision="achromatopsia"] .swatch,
-[data-vision="achromatopsia"] .mesh-preview {
+[data-vision="achromatopsia"] .mesh-preview,
+[data-vision="achromatopsia"] .wallpaper-canvas {
   filter: grayscale(1);
 }
 
 /* ---------------- responsive ---------------- */
 @media (max-width: 900px) {
-  .gradient-studio, .mesh-studio { grid-template-columns: 1fr; }
+  .gradient-studio, .mesh-studio, .wallpaper-studio { grid-template-columns: 1fr; }
   .preview-col { position: static; }
 }
 
