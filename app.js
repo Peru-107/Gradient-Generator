@@ -109,11 +109,12 @@ let toastTimer = null;
 function showToast(msg) {
   toastEl.textContent = msg;
   toastEl.classList.add('show');
+  toastPop(toastEl);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
 }
 
-async function copyText(text, label) {
+async function copyText(text, label, sourceEl, burstColor) {
   try {
     await navigator.clipboard.writeText(text);
   } catch (e) {
@@ -127,6 +128,10 @@ async function copyText(text, label) {
     document.body.removeChild(ta);
   }
   showToast(label || 'Copied to clipboard');
+  if (sourceEl) {
+    const rect = sourceEl.getBoundingClientRect();
+    confettiBurst(rect.left + rect.width / 2, rect.top + rect.height / 2, burstColor);
+  }
 }
 
 function downloadBlob(content, filename, type) {
@@ -171,8 +176,9 @@ function setActiveTab(tab) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('panel-' + tab).classList.add('active');
+  const fromPanel = document.querySelector('.panel.active');
+  const toPanel = document.getElementById('panel-' + tab);
+  animateTabSwitch(fromPanel === toPanel ? null : fromPanel, toPanel);
 }
 
 /* ==========================================================================
@@ -180,10 +186,20 @@ function setActiveTab(tab) {
    ========================================================================== */
 
 const themeToggle = document.getElementById('themeToggle');
+function syncNativeStatusBar(theme) {
+  const StatusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
+  if (!StatusBar) return;
+  const bg = theme === 'dark' ? '#0e0f1e' : '#f2f3f8';
+  const style = theme === 'dark' ? 'DARK' : 'LIGHT';
+  StatusBar.setBackgroundColor({ color: bg }).catch(() => {});
+  StatusBar.setStyle({ style }).catch(() => {});
+}
+
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   themeToggle.textContent = theme === 'dark' ? '☀' : '🌙';
   localStorage.setItem('gradii_theme', theme);
+  syncNativeStatusBar(theme);
 }
 (function initTheme() {
   const saved = localStorage.getItem('gradii_theme');
@@ -193,6 +209,7 @@ function applyTheme(theme) {
 themeToggle.addEventListener('click', () => {
   const current = document.documentElement.getAttribute('data-theme');
   applyTheme(current === 'dark' ? 'light' : 'dark');
+  animateThemeIcon(themeToggle);
 });
 
 /* ==========================================================================
@@ -372,6 +389,7 @@ function randomizeGradient() {
   syncGradientControlsFromState();
   renderStopsList();
   renderGradientPreview();
+  quirkyBounce(document.querySelector('#panel-gradient .preview-frame'));
 }
 
 function syncGradientControlsFromState() {
@@ -455,6 +473,7 @@ function renderPresets() {
     });
     presetsGrid.appendChild(el);
   });
+  staggerIn(presetsGrid);
 }
 
 /* ---- canvas rendering for export ---- */
@@ -622,6 +641,7 @@ function generatePalette() {
   ensurePaletteArrays();
   paletteState.colors = generatePaletteColors(paletteState.harmony, paletteState.count, paletteState.colors, paletteState.locked);
   renderPaletteSwatches();
+  quirkyBounce(paletteSwatchesEl);
 }
 
 function renderPaletteSwatches() {
@@ -656,7 +676,8 @@ function renderPaletteSwatches() {
       renderPaletteSwatches();
     });
 
-    el.querySelector('.swatch-hex').addEventListener('click', () => copyText(color.toUpperCase(), `${color.toUpperCase()} copied`));
+    const swatchHexEl = el.querySelector('.swatch-hex');
+    swatchHexEl.addEventListener('click', () => copyText(color.toUpperCase(), `${color.toUpperCase()} copied`, swatchHexEl, color));
 
     el.querySelector('.swatch-color-input').addEventListener('input', (e) => {
       paletteState.colors[i] = e.target.value;
@@ -680,6 +701,7 @@ function renderPaletteSwatches() {
 
     paletteSwatchesEl.appendChild(el);
   });
+  staggerIn(paletteSwatchesEl);
 }
 
 paletteCountSlider.addEventListener('input', () => {
@@ -1074,6 +1096,7 @@ function renderMeshPresets() {
     });
     meshPresetsGrid.appendChild(el);
   });
+  staggerIn(meshPresetsGrid);
 }
 
 function randomizeMesh() {
@@ -1081,6 +1104,7 @@ function randomizeMesh() {
   meshState.points = randomMeshPoints(meshState.points.length || 5);
   renderMeshBlobsList();
   renderMeshPreview();
+  quirkyBounce(document.querySelector('#panel-mesh .preview-frame'));
 }
 
 document.getElementById('btnAddBlob').addEventListener('click', () => {
@@ -1398,6 +1422,7 @@ function renderWallpaperPresets() {
     });
     wallpaperPresetsGrid.appendChild(canvas);
   });
+  staggerIn(wallpaperPresetsGrid);
 }
 
 function randomizeWallpaperColors() {
@@ -1410,6 +1435,7 @@ function randomizeWallpaperColors() {
   });
   renderWallpaperColorsList();
   if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
 }
 
 wallpaperPatternSelect.addEventListener('change', () => {
@@ -1669,9 +1695,11 @@ function renderExtractedPalette() {
         <span class="swatch-hex" title="Click to copy">${color.toUpperCase()}</span>
       </div>
     `;
-    el.querySelector('.swatch-hex').addEventListener('click', () => copyText(color.toUpperCase(), `${color.toUpperCase()} copied`));
+    const hexEl = el.querySelector('.swatch-hex');
+    hexEl.addEventListener('click', () => copyText(color.toUpperCase(), `${color.toUpperCase()} copied`, hexEl, color));
     extractedPaletteEl.appendChild(el);
   });
+  staggerIn(extractedPaletteEl);
 }
 
 document.getElementById('btnSendToPalette').addEventListener('click', () => {
@@ -1805,6 +1833,9 @@ function init() {
   renderWallpaperPresets();
 
   loadStateFromUrl();
+
+  initGlobalPressFeedback();
+  introReveal();
 }
 
 init();

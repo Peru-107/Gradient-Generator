@@ -47,11 +47,27 @@ Open `index.html` in any modern browser to use it, or run a local server (`pytho
 - Built-in colorblindness simulator (Protanopia, Deuteranopia, Tritanopia, Achromatopsia) applied live to previews and swatches
 - WCAG contrast badges on every palette swatch
 
+### Motion
+- GSAP drives the big "quirky" moments: a staggered intro reveal, tab-crossfade transitions, an elastic bounce on every randomize/generate action, a theme-icon flip, and a bouncy toast entrance
+- anime.js handles playful staggered grid reveals (palette swatches, preset grids) and a confetti burst when you copy a hex code
+- Motion One provides lightweight press/hover feedback on buttons and swatches
+- All motion respects `prefers-reduced-motion` and degrades gracefully if a library fails to load
+
 ### Extras
 - Light/dark theme toggle (remembers your choice)
 - Animated, theme-aware background
 - Keyboard shortcut: **Space** randomizes the gradient, mesh, palette, or wallpaper colors depending on the active tab
 - Installable as a PWA (works offline once installed, thanks to a service worker)
+- Mobile-tuned touch UI: 44px+ tap targets, no accidental input-zoom, safe-area padding for notches/gesture bars, and a native Android wrapper (see below)
+
+## Android app
+
+The `Gradii.apk` build wraps this same web app in a Capacitor WebView shell — same code, no separate mobile version to maintain. It ships with:
+- A dedicated launcher icon, splash screen, and status bar color matching the app's brand and current light/dark theme
+- `windowSoftInputMode="adjustResize"` so the keyboard never covers an input
+- The same mobile-tuned CSS as the web app (44px touch targets, 16px form fields to avoid iOS/Android auto-zoom, `touch-action: manipulation` to remove tap delay)
+
+It's a debug-signed build (the standard Android developer signing key) — installable directly on a device via "install from unknown sources," not intended for Play Store distribution as-is.
 
 ## Deployment
 
