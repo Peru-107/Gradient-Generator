@@ -928,7 +928,8 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   .preview-frame { order: 1; }
   .controls-col { order: 2; }
   .preview-actions,
-  .css-output { order: 3; }
+  .css-output,
+  .export-block { order: 3; }
   .preview-col > .hint { order: 4; }
 }
 

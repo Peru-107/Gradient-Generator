@@ -6,6 +6,20 @@
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
+/* Exports sized to a generic preset rarely match the requesting device's
+   actual screen exactly, so setting the result as a wallpaper leaves
+   Android/iOS to stretch or crop it to fit. Exporting at the device's own
+   native pixel resolution (CSS size × devicePixelRatio) instead means the
+   image is already the right shape for that screen — no scaling needed. */
+function getDeviceExportSize(maxDim) {
+  const cap = maxDim || 4096;
+  const dpr = window.devicePixelRatio || 1;
+  let w = Math.round((window.screen.width || window.innerWidth) * dpr);
+  let h = Math.round((window.screen.height || window.innerHeight) * dpr);
+  const scale = Math.min(1, cap / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+}
+
 function hexToRgb(hex) {
   hex = hex.replace('#', '').trim();
   if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
@@ -134,8 +148,47 @@ async function copyText(text, label, sourceEl, burstColor) {
   }
 }
 
-function downloadBlob(content, filename, type) {
-  const blob = new Blob([content], { type });
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function isNativeApp() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
+/* Inside the packaged Android app, a plain <a download> click on a blob:
+   URL is silently swallowed by the WebView — there's no browser download
+   manager to hand it to, so nothing happens and nothing asks for
+   permission. The fix isn't a storage permission prompt (modern Android
+   apps avoid that); it's to stage the file via the Filesystem plugin and
+   hand it to the native Share sheet, so the user picks where it goes. */
+async function saveFile(blob, filename, mimeType) {
+  if (isNativeApp()) {
+    try {
+      const Filesystem = window.Capacitor.Plugins.Filesystem;
+      const Share = window.Capacitor.Plugins.Share;
+      const base64 = await blobToBase64(blob);
+      const written = await Filesystem.writeFile({
+        path: filename,
+        data: base64,
+        directory: 'CACHE',
+        recursive: true,
+      });
+      if (Share) {
+        await Share.share({ title: filename, url: written.uri, dialogTitle: `Save ${filename}` });
+      }
+      return;
+    } catch (e) {
+      showToast('Could not save: ' + (e && e.message ? e.message : 'unknown error'));
+      return;
+    }
+  }
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -146,17 +199,12 @@ function downloadBlob(content, filename, type) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+function downloadBlob(content, filename, type) {
+  saveFile(new Blob([content], { type }), filename, type);
+}
+
 function downloadCanvasPng(canvas, filename) {
-  canvas.toBlob(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }, 'image/png');
+  canvas.toBlob(blob => saveFile(blob, filename, 'image/png'), 'image/png');
 }
 
 /* ==========================================================================
@@ -524,8 +572,9 @@ function drawGradientToCanvas(ctx, w, h, state) {
 
 document.getElementById('btnDownloadPng').addEventListener('click', () => {
   const canvas = document.getElementById('exportCanvas');
-  canvas.width = 1600;
-  canvas.height = 1000;
+  const { w, h } = getDeviceExportSize();
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext('2d');
   drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
   downloadCanvasPng(canvas, 'gradient.png');
@@ -884,15 +933,7 @@ function exportPaletteAsAse(colors) {
   let offset = 12;
   blocks.forEach(b => { out.set(b, offset); offset += b.length; });
 
-  const blob = new Blob([out], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'palette.ase';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  saveFile(new Blob([out], { type: 'application/octet-stream' }), 'palette.ase', 'application/octet-stream');
 }
 
 function exportPaletteAsGpl(colors) {
@@ -1142,7 +1183,7 @@ function hexToRgba(hex, alpha) {
 
 document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
   const canvas = document.getElementById('exportCanvas');
-  const w = 1600, h = 1000;
+  const { w, h } = getDeviceExportSize();
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
@@ -1479,14 +1520,20 @@ document.getElementById('btnShareWallpaper').addEventListener('click', () => {
 });
 
 document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () => {
-  const [wStr, hStr] = wallpaperResolutionSelect.value.split('x');
-  const w = Number(wStr), h = Number(hStr);
+  let w, h;
+  if (wallpaperResolutionSelect.value === 'auto') {
+    ({ w, h } = getDeviceExportSize());
+  } else {
+    const [wStr, hStr] = wallpaperResolutionSelect.value.split('x');
+    w = Number(wStr);
+    h = Number(hStr);
+  }
   const canvas = document.getElementById('exportCanvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed);
-  downloadCanvasPng(canvas, `wallpaper-${wStr}x${hStr}.png`);
+  downloadCanvasPng(canvas, `wallpaper-${w}x${h}.png`);
   showToast('Wallpaper PNG downloaded');
 });
 
@@ -1515,14 +1562,7 @@ document.getElementById('btnRecordWallpaper').addEventListener('click', () => {
   recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   recorder.onstop = () => {
     const blob = new Blob(chunks, { type: mime || 'video/webm' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'wallpaper.webm';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    saveFile(blob, 'wallpaper.webm', mime || 'video/webm');
     if (!wasLive) stopWallpaperAnimation();
     showToast('Video downloaded');
   };
