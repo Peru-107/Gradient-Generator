@@ -1595,6 +1595,63 @@ tabButtons.forEach(btn => {
 });
 
 /* ==========================================================================
+   FULL SCREEN PREVIEW
+   ========================================================================== */
+
+const fullscreenOverlay = document.getElementById('fullscreenOverlay');
+const fullscreenContent = document.getElementById('fullscreenContent');
+const wallpaperPreviewFrame = document.querySelector('#panel-wallpaper .preview-frame');
+
+function openFullscreenPreview(kind) {
+  fullscreenContent.style.background = '';
+  fullscreenContent.style.backgroundColor = '';
+  fullscreenContent.style.backgroundImage = '';
+  fullscreenContent.style.backgroundBlendMode = '';
+
+  if (kind === 'gradient') {
+    fullscreenContent.style.background = buildGradientCss(gradientState);
+  } else if (kind === 'mesh') {
+    const layers = buildMeshCssLayers(meshState);
+    fullscreenContent.style.backgroundColor = meshState.baseColor;
+    fullscreenContent.style.backgroundImage = layers.join(', ');
+    fullscreenContent.style.backgroundBlendMode = meshState.blendMode;
+  } else if (kind === 'wallpaper') {
+    wallpaperCanvas.classList.add('fullscreen-canvas');
+    fullscreenContent.appendChild(wallpaperCanvas);
+    resizeWallpaperCanvas();
+    if (wallpaperState.live) startWallpaperAnimation();
+    else drawWallpaperFrame(wallpaperFrozenT);
+  }
+
+  fullscreenOverlay.dataset.kind = kind;
+  fullscreenOverlay.classList.add('open');
+}
+
+function closeFullscreenPreview() {
+  const kind = fullscreenOverlay.dataset.kind;
+  if (kind === 'wallpaper' && wallpaperPreviewFrame) {
+    wallpaperCanvas.classList.remove('fullscreen-canvas');
+    wallpaperPreviewFrame.insertBefore(wallpaperCanvas, wallpaperPreviewFrame.firstChild);
+    resizeWallpaperCanvas();
+    if (wallpaperState.live) startWallpaperAnimation();
+    else drawWallpaperFrame(wallpaperFrozenT);
+  }
+  fullscreenOverlay.classList.remove('open');
+  fullscreenOverlay.dataset.kind = '';
+}
+
+document.getElementById('btnFullscreenGradient').addEventListener('click', () => openFullscreenPreview('gradient'));
+document.getElementById('btnFullscreenMesh').addEventListener('click', () => openFullscreenPreview('mesh'));
+document.getElementById('btnFullscreenWallpaper').addEventListener('click', () => openFullscreenPreview('wallpaper'));
+document.getElementById('btnCloseFullscreen').addEventListener('click', closeFullscreenPreview);
+fullscreenOverlay.addEventListener('click', (e) => {
+  if (e.target === fullscreenOverlay || e.target === fullscreenContent) closeFullscreenPreview();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && fullscreenOverlay.classList.contains('open')) closeFullscreenPreview();
+});
+
+/* ==========================================================================
    IMAGE COLOR EXTRACTOR
    ========================================================================== */
 
