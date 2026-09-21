@@ -16,6 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.2/anime.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 <div class="bg-orbs" aria-hidden="true">
@@ -51,6 +52,7 @@
         <option value="achromatopsia">👁 Achromatopsia</option>
       </select>
       <button id="btnEyedropperInfo" class="icon-btn" title="Space bar generates a new random design" aria-hidden="true">⌨</button>
+      <button id="btnOpenPro" class="icon-btn pro-btn" title="Gradii Pro">⭐</button>
       <button id="themeToggle" class="icon-btn" title="Toggle light / dark theme">🌙</button>
     </div>
   </header>
@@ -62,7 +64,9 @@
 
         <div class="preview-col">
           <div class="preview-frame">
-            <div id="gradientPreview" class="gradient-preview"></div>
+            <div id="gradientPreview" class="gradient-preview">
+              <span class="contrast-overlay" id="gradientContrastOverlay" hidden></span>
+            </div>
             <button class="fullscreen-btn" id="btnFullscreenGradient" title="Full screen preview" aria-label="Full screen preview">⤢</button>
           </div>
 
@@ -71,6 +75,7 @@
               <button id="btnRandomGradient" class="btn btn-primary">🎲 Randomize</button>
               <button id="btnCopyCss" class="btn">📋 Copy CSS</button>
               <button id="btnShareGradient" class="btn">🔗 Share</button>
+              <button id="btnQrGradient" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
               <button id="btnDownloadPng" class="btn">⬇ PNG</button>
               <div class="dropdown">
                 <button id="btnExportGradient" class="btn">⬇ More ▾</button>
@@ -78,6 +83,8 @@
                   <button data-export="css">CSS File</button>
                   <button data-export="scss">SCSS Variable</button>
                   <button data-export="tailwind">Tailwind Class</button>
+                  <button data-export="tokens">Design Tokens (JSON)</button>
+                  <button data-export="figma">Figma Variables (JSON)</button>
                 </div>
               </div>
             </div>
@@ -87,6 +94,25 @@
         </div>
 
         <div class="controls-col">
+          <div class="control-card contrast-card">
+            <label class="control-label">Text contrast checker</label>
+            <div class="contrast-row">
+              <input type="text" id="gradientContrastText" class="text-input" placeholder="Sample text..." maxlength="60">
+              <input type="color" id="gradientContrastColor" class="contrast-color-input" value="#ffffff" title="Text color">
+            </div>
+            <div class="contrast-result" id="gradientContrastResult" hidden>
+              <span class="contrast-ratio" id="gradientContrastRatio">—</span>
+              <span class="contrast-badge" id="gradientContrastBadge">—</span>
+              <button class="btn btn-sm" id="gradientContrastFix">Auto-fix</button>
+            </div>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label control-label-row"><span>Smooth interpolation (OKLCH)</span>
+              <label class="oklch-switch"><input type="checkbox" id="gradientOklchToggle"><span></span></label>
+            </label>
+          </div>
+
           <div class="control-card">
             <label class="control-label">Type</label>
             <div class="segmented" id="gradientTypeSeg">
@@ -155,12 +181,14 @@
               <option value="triadic">Triadic</option>
               <option value="tetradic">Tetradic</option>
               <option value="shades">Shades</option>
+              <option value="cohesiveOklch">Cohesive (OKLCH, honors all locks)</option>
             </select>
           </div>
 
           <button id="btnGeneratePalette" class="btn btn-primary">🎲 Generate <kbd>Space</kbd></button>
           <button id="btnSavePalette" class="btn">★ Save</button>
           <button id="btnSharePalette" class="btn">🔗 Share</button>
+          <button id="btnQrPalette" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
           <button id="btnCopyAllHex" class="btn">📋 Copy All</button>
 
           <div class="dropdown">
@@ -174,11 +202,21 @@
               <button data-export="gpl">GIMP Palette</button>
               <button data-export="json">JSON</button>
               <button data-export="text">Text File</button>
+              <button data-export="tokens">Design Tokens (JSON)</button>
+              <button data-export="figma">Figma Variables (JSON)</button>
             </div>
           </div>
         </div>
 
         <p class="hint">Click a swatch's hex to copy it · click the lock to keep a color when regenerating · click the color chip to fine‑tune it.</p>
+
+        <div class="control-card" id="brandKitCard">
+          <label class="control-label control-label-row"><span>🔒 Brand Kit mode</span>
+            <label class="oklch-switch"><input type="checkbox" id="brandKitToggle"><span></span></label>
+          </label>
+          <p class="hint" id="brandKitHint">Lock your brand colors, and every generator (Gradient, Mesh, Wallpaper) stays within them.</p>
+          <div id="brandKitSwatches" class="brand-kit-swatches" hidden></div>
+        </div>
 
         <div id="paletteSwatches" class="palette-swatches"></div>
 
@@ -196,7 +234,9 @@
       <div class="studio mesh-studio">
         <div class="preview-col">
           <div class="preview-frame">
-            <div id="meshPreview" class="gradient-preview mesh-preview"></div>
+            <div id="meshPreview" class="gradient-preview mesh-preview">
+              <span class="contrast-overlay" id="meshContrastOverlay" hidden></span>
+            </div>
             <button class="fullscreen-btn" id="btnFullscreenMesh" title="Full screen preview" aria-label="Full screen preview">⤢</button>
           </div>
           <div class="export-block">
@@ -204,6 +244,7 @@
               <button id="btnRandomMesh" class="btn btn-primary">🎲 Randomize</button>
               <button id="btnCopyMeshCss" class="btn">📋 Copy CSS</button>
               <button id="btnShareMesh" class="btn">🔗 Share</button>
+              <button id="btnQrMesh" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
               <button id="btnDownloadMeshPng" class="btn">⬇ PNG</button>
             </div>
             <pre id="meshCssOutput" class="css-output" title="Click to copy"></pre>
@@ -211,6 +252,19 @@
         </div>
 
         <div class="controls-col">
+          <div class="control-card contrast-card">
+            <label class="control-label">Text contrast checker</label>
+            <div class="contrast-row">
+              <input type="text" id="meshContrastText" class="text-input" placeholder="Sample text..." maxlength="60">
+              <input type="color" id="meshContrastColor" class="contrast-color-input" value="#ffffff" title="Text color">
+            </div>
+            <div class="contrast-result" id="meshContrastResult" hidden>
+              <span class="contrast-ratio" id="meshContrastRatio">—</span>
+              <span class="contrast-badge" id="meshContrastBadge">—</span>
+              <button class="btn btn-sm" id="meshContrastFix">Auto-fix</button>
+            </div>
+          </div>
+
           <div class="control-card">
             <div class="control-label-row">
               <label class="control-label">Base Color</label>
@@ -270,24 +324,29 @@
               </div>
               <button id="btnWallpaperNewFrame" class="btn" hidden>🔀 New Frame</button>
               <button id="btnShareWallpaper" class="btn">🔗 Share</button>
+              <button id="btnQrWallpaper" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
             </div>
 
             <div class="preview-actions">
               <select id="wallpaperResolutionSelect" class="select">
                 <option value="auto" selected>📱 My Screen (recommended)</option>
-                <option value="1170x2532">Phone (1170×2532)</option>
-                <option value="1920x1080">Desktop (1920×1080)</option>
-                <option value="3840x2160">4K UHD (3840×2160)</option>
-                <option value="1080x1080">Square (1080×1080)</option>
-                <option value="3440x1440">Ultrawide (3440×1440)</option>
+                <option value="1170x2532">⭐ Phone (1170×2532)</option>
+                <option value="1920x1080">⭐ Desktop (1920×1080)</option>
+                <option value="3840x2160">⭐ 4K UHD (3840×2160)</option>
+                <option value="1080x1080">⭐ Square (1080×1080)</option>
+                <option value="3440x1440">⭐ Ultrawide (3440×1440)</option>
               </select>
               <button id="btnDownloadWallpaperPng" class="btn">⬇ PNG</button>
+              <button id="btnSetAsWallpaper" class="btn" hidden>🖼 Set as Wallpaper</button>
               <button id="btnRecordWallpaper" class="btn">🎬 Record Video (6s)</button>
               <button id="btnDownloadWallpaperHtml" class="btn">📄 Live HTML File</button>
             </div>
+            <label class="control-label control-label-row audio-reactive-row"><span>🎤 Audio-reactive (mic-powered pulse in exported HTML)</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperAudioReactive"><span></span></label>
+            </label>
           </div>
 
-          <p class="hint">PNG exports at the selected resolution. Video records a 6s loop at preview size. The HTML file is a self-contained, self-playing wallpaper you can point apps like Wallpaper Engine or Lively Wallpaper at.</p>
+          <p class="hint">PNG exports at the selected resolution (⭐ = Pro). Video records a 6s loop at preview size. The HTML file is a self-contained, self-playing wallpaper you can point apps like Wallpaper Engine or Lively Wallpaper at.</p>
         </div>
 
         <div class="controls-col">
@@ -362,6 +421,42 @@
 <div id="fullscreenOverlay" class="fullscreen-overlay">
   <button id="btnCloseFullscreen" class="fullscreen-close" aria-label="Close full screen preview">✕</button>
   <div id="fullscreenContent" class="fullscreen-content"></div>
+</div>
+
+<div id="proOverlay" class="fullscreen-overlay pro-overlay">
+  <button id="btnClosePro" class="fullscreen-close" aria-label="Close">✕</button>
+  <div class="pro-modal">
+    <div id="proLockedView">
+      <h2 class="pro-title">⭐ Gradii Pro</h2>
+      <p class="pro-price">₹39 <span>one-time · yours forever</span></p>
+      <ul class="pro-features">
+        <li>No "Made with Gradii" watermark on exports</li>
+        <li>4K/8K and every resolution preset</li>
+        <li>Aurora Bento theme, unlocked</li>
+        <li>Unlimited saved palettes</li>
+      </ul>
+      <a id="proUpiLink" class="btn btn-primary pro-pay-btn" href="upi://pay?pa=YOUR_UPI_ID_HERE&pn=Gradii&am=39&cu=INR&tn=Gradii%20Pro" target="_blank" rel="noopener">Pay ₹39 via GPay / UPI</a>
+      <p class="hint pro-hint">After paying, email your payment screenshot/reference to <strong id="proEmailAddr">your@email.here</strong> — you'll get a license key back to paste in below.</p>
+      <div class="pro-redeem-row">
+        <input type="text" id="proLicenseInput" class="text-input" placeholder="Paste your license key">
+        <button id="btnRedeemLicense" class="btn">Redeem</button>
+      </div>
+      <p class="hint pro-error" id="proRedeemError" hidden></p>
+    </div>
+    <div id="proUnlockedView" hidden>
+      <h2 class="pro-title">⭐ Gradii Pro — Unlocked</h2>
+      <p class="hint">Thanks for supporting Gradii. Watermark-free exports, every resolution, Aurora Bento, and unlimited saved palettes are all yours.</p>
+    </div>
+  </div>
+</div>
+
+<div id="qrOverlay" class="fullscreen-overlay qr-overlay">
+  <button id="btnCloseQr" class="fullscreen-close" aria-label="Close">✕</button>
+  <div class="qr-modal">
+    <h2 class="pro-title">Scan to import</h2>
+    <div id="qrCodeBox"></div>
+    <p class="hint">Scan with any phone camera to open this exact design in Gradii.</p>
+  </div>
 </div>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
