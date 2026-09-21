@@ -275,6 +275,7 @@ function setActiveTab(tab) {
   const fromPanel = document.querySelector('.panel.active');
   const toPanel = document.getElementById('panel-' + tab);
   animateTabSwitch(fromPanel === toPanel ? null : fromPanel, toPanel);
+  updateAuroraBackdrop();
 }
 
 /* ==========================================================================
@@ -282,31 +283,103 @@ function setActiveTab(tab) {
    ========================================================================== */
 
 const themeToggle = document.getElementById('themeToggle');
+const THEME_CYCLE = ['light', 'dark', 'aurora'];
+const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀' };
+const THEME_TITLE = {
+  light: 'Switch to dark theme',
+  dark: 'Switch to Aurora Bento theme',
+  aurora: 'Switch to light theme',
+};
+
 function syncNativeStatusBar(theme) {
   const StatusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
   if (!StatusBar) return;
-  const bg = theme === 'dark' ? '#0e0f1e' : '#f2f3f8';
-  const style = theme === 'dark' ? 'DARK' : 'LIGHT';
+  const bg = theme === 'dark' ? '#0e0f1e' : theme === 'aurora' ? '#08070f' : '#f2f3f8';
+  const style = theme === 'light' ? 'LIGHT' : 'DARK';
   StatusBar.setBackgroundColor({ color: bg }).catch(() => {});
   StatusBar.setStyle({ style }).catch(() => {});
 }
 
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  themeToggle.textContent = theme === 'dark' ? '☀' : '🌙';
+  themeToggle.textContent = THEME_ICON[theme] || '🌙';
+  themeToggle.title = THEME_TITLE[theme] || 'Toggle theme';
   localStorage.setItem('gradii_theme', theme);
   syncNativeStatusBar(theme);
+  /* Deferred: on first load this can fire before gradientState/meshState/
+     etc. (declared later in this file) have been initialized. */
+  if (theme === 'aurora') setTimeout(updateAuroraBackdrop, 0);
 }
 (function initTheme() {
   const saved = localStorage.getItem('gradii_theme');
-  const preferred = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const preferred = THEME_CYCLE.includes(saved)
+    ? saved
+    : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   applyTheme(preferred);
 })();
 themeToggle.addEventListener('click', () => {
   const current = document.documentElement.getAttribute('data-theme');
-  applyTheme(current === 'dark' ? 'light' : 'dark');
+  const next = THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length];
+  applyTheme(next);
   animateThemeIcon(themeToggle);
 });
+
+/* ==========================================================================
+   Aurora Bento live backdrop
+   ----------------------------------------------------------------
+   The three .orb-calm blobs (brand colors) are on by default. The first
+   real interaction with a control anywhere outside the topbar swaps in
+   the .orb-live blobs, recolored to whatever the active studio is
+   currently showing, and the two layers crossfade via CSS opacity. Tab
+   switches keep the live colors in sync with whichever studio is active.
+   ========================================================================== */
+
+const bgOrbs = document.querySelector('.bg-orbs');
+let auroraEngaged = false;
+
+function getActiveStudioColors() {
+  switch (activeTab) {
+    case 'gradient':
+      return gradientState.stops.map(s => s.color);
+    case 'mesh':
+      return meshState.points.length ? meshState.points.map(p => p.color) : [meshState.baseColor];
+    case 'wallpaper':
+      return wallpaperState.colors;
+    case 'palette':
+      return paletteState.colors;
+    case 'image':
+      return extractedColors.length ? extractedColors : paletteState.colors;
+    default:
+      return [];
+  }
+}
+
+function updateAuroraBackdrop() {
+  if (!bgOrbs || document.documentElement.getAttribute('data-theme') !== 'aurora') return;
+  const colors = getActiveStudioColors();
+  if (!colors.length) return;
+  bgOrbs.style.setProperty('--live-1', colors[0]);
+  bgOrbs.style.setProperty('--live-2', colors[Math.floor(colors.length / 2)] || colors[0]);
+  bgOrbs.style.setProperty('--live-3', colors[colors.length - 1]);
+}
+
+function engageAurora() {
+  if (auroraEngaged || !bgOrbs) return;
+  auroraEngaged = true;
+  bgOrbs.classList.add('live-active');
+  updateAuroraBackdrop();
+}
+
+document.addEventListener('input', (e) => {
+  if (e.target.closest('.topbar')) return;
+  engageAurora();
+  updateAuroraBackdrop();
+}, { passive: true });
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.topbar')) return;
+  engageAurora();
+  requestAnimationFrame(updateAuroraBackdrop);
+}, { passive: true });
 
 /* ==========================================================================
    Color vision simulation

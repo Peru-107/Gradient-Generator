@@ -32,6 +32,20 @@
   color-scheme: dark;
 }
 
+/* Aurora Bento: glass tiles floating over a slow-drifting gradient field.
+   Reuses the same --bg-alt/--bg-soft/--text tokens every component already
+   renders with, so cards, selects, and inputs go glassy for free. */
+[data-theme="aurora"] {
+  --bg: #08070f;
+  --bg-alt: rgba(255, 255, 255, 0.08);
+  --bg-soft: rgba(255, 255, 255, 0.05);
+  --text: #f6f5fc;
+  --text-muted: #b6b2c6;
+  --border: rgba(255, 255, 255, 0.16);
+  --shadow: rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
@@ -106,6 +120,72 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   33% { transform: translate(40px, 30px) scale(1.08); }
   66% { transform: translate(-30px, 20px) scale(0.95); }
 }
+
+/* Aurora Bento backdrop: the orbs above become the "calm" layer (brand
+   colors, always on by default); a second "live" layer fades in once the
+   person actually starts editing, recoloring to whatever they're building
+   in the active studio (see updateAuroraBackdrop() in app.js). Both layers
+   share the same positions/motion so the crossfade reads as one field
+   changing color, not two different backgrounds swapping. */
+[data-theme="aurora"] .orb:not(.orb-live) { opacity: 0.55; filter: blur(90px); transition: opacity 1.4s ease; }
+[data-theme="aurora"] .orb-1 { width: 560px; height: 560px; }
+[data-theme="aurora"] .orb-2 { width: 500px; height: 500px; }
+[data-theme="aurora"] .orb-3 { width: 460px; height: 460px; }
+
+.orb-live { opacity: 0; }
+[data-theme="aurora"] .orb-live { opacity: 0; filter: blur(90px); transition: opacity 1.6s ease; }
+[data-theme="aurora"] .orb-live-1 {
+  width: 560px; height: 560px; top: -120px; left: -100px;
+  background: radial-gradient(circle at 30% 30%, var(--live-1, var(--accent)), transparent 70%);
+  animation-duration: 26s;
+}
+[data-theme="aurora"] .orb-live-2 {
+  width: 500px; height: 500px; bottom: -140px; right: -80px;
+  background: radial-gradient(circle at 60% 60%, var(--live-2, var(--accent-2)), transparent 70%);
+  animation-duration: 30s; animation-delay: -6s;
+}
+[data-theme="aurora"] .orb-live-3 {
+  width: 460px; height: 460px; top: 40%; left: 60%;
+  background: radial-gradient(circle at 50% 50%, var(--live-3, var(--accent-3)), transparent 70%);
+  animation-duration: 34s; animation-delay: -14s;
+}
+[data-theme="aurora"] .bg-orbs.live-active .orb-calm { opacity: 0; }
+[data-theme="aurora"] .bg-orbs.live-active .orb-live { opacity: 0.55; }
+
+/* ---------------- Aurora Bento: glass tiles + Von Restorff CTAs ---------------- */
+[data-theme="aurora"] .control-card,
+[data-theme="aurora"] .preview-frame,
+[data-theme="aurora"] .palette-swatches,
+[data-theme="aurora"] .image-preview-wrap,
+[data-theme="aurora"] .css-output,
+[data-theme="aurora"] .dropdown-menu,
+[data-theme="aurora"] .topbar,
+[data-theme="aurora"] .toast,
+[data-theme="aurora"] .fullscreen-close,
+[data-theme="aurora"] .fullscreen-btn,
+[data-theme="aurora"] .btn,
+[data-theme="aurora"] .select,
+[data-theme="aurora"] .drop-zone {
+  background: var(--bg-alt);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid var(--border);
+}
+
+/* Exactly one element per screen stays solid: the export/download action.
+   Von Restorff effect — the one thing that should never blend into the
+   glass is the action people came here to finish. */
+[data-theme="aurora"] [id^="btnDownload"],
+[data-theme="aurora"] [id^="btnExport"] {
+  background: #ffffff;
+  color: #17151f;
+  border: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  font-weight: 700;
+}
+[data-theme="aurora"] [id^="btnDownload"]:hover,
+[data-theme="aurora"] [id^="btnExport"]:hover { background: #ffffff; opacity: 0.92; }
 
 /* ---------------- layout ---------------- */
 .app {
@@ -931,6 +1011,38 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   .css-output,
   .export-block { order: 3; }
   .preview-col > .hint { order: 4; }
+
+  /* Aurora Bento: the same flattened elements above become tiles in a
+     2-column grid instead of one stacked column. Preview and the export
+     bar stay full-width (hero + footer); everything else auto-flows into
+     pairs, and any card with dense content (presets, stop lists, the
+     collapsible "more options" panel) spans both columns so it never
+     gets squeezed into a half-width tile. */
+  [data-theme="aurora"] .gradient-studio,
+  [data-theme="aurora"] .mesh-studio,
+  [data-theme="aurora"] .wallpaper-studio {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+  /* .controls-col stays a real box in the base rule above (only .preview-col
+     unwraps there) — flatten it too here so its individual .control-cards
+     become their own grid tiles instead of one tall stacked column. They
+     lose the base rule's order:2 on the wrapper itself once it's gone, so
+     each card gets that same order explicitly, keeping them between the
+     preview (order 1) and the export bar (order 3). */
+  [data-theme="aurora"] .controls-col { display: contents; }
+  [data-theme="aurora"] .controls-col > .control-card { order: 2; }
+  [data-theme="aurora"] .preview-frame,
+  [data-theme="aurora"] .export-block,
+  [data-theme="aurora"] .controls-col > details.control-card,
+  [data-theme="aurora"] .controls-col > .control-card:has(.presets-grid),
+  [data-theme="aurora"] .controls-col > .control-card:has(.stops-list),
+  [data-theme="aurora"] .controls-col > .control-card:has(.mesh-blobs-list),
+  [data-theme="aurora"] .controls-col > .control-card:has(.wallpaper-colors-list) {
+    grid-column: 1 / -1;
+  }
+  [data-theme="aurora"] .preview-col > .hint { grid-column: 1 / -1; }
 }
 
 /* Phones and small tablets: bigger touch targets, no input-zoom, tighter layout */
