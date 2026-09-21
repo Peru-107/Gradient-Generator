@@ -6,6 +6,95 @@
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
+/* ---------------- OKLCH color space (Björn Ottosson's OKLab) ----------------
+   Interpolating in OKLCH instead of RGB/HSL avoids the muddy, uneven-looking
+   midpoints classic gradients get between saturated colors (e.g. red→green
+   passing through a grey-brown instead of a clean, equally-bright orange). */
+function srgbToLinear(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+function linearToSrgb(c) { c = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055; return clamp(Math.round(c * 255), 0, 255); }
+
+function hexToOklab(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const lr = srgbToLinear(r), lg = srgbToLinear(g), lb = srgbToLinear(b);
+  const l = 0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb;
+  const m = 0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb;
+  const s = 0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb;
+  const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+  return {
+    L: 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+    a: 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+    b: 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+  };
+}
+function oklabToHex(L, a, b) {
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+  const lr = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  const lg = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  const lb = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+  return rgbToHex(linearToSrgb(lr), linearToSrgb(lg), linearToSrgb(lb));
+}
+function hexToOklch(hex) {
+  const { L, a, b } = hexToOklab(hex);
+  const C = Math.sqrt(a * a + b * b);
+  let H = Math.atan2(b, a) * 180 / Math.PI;
+  if (H < 0) H += 360;
+  return { L, C, H };
+}
+function oklchToHex(L, C, H) {
+  const hr = H * Math.PI / 180;
+  return oklabToHex(L, C * Math.cos(hr), C * Math.sin(hr));
+}
+function mixOklch(hexA, hexB, t) {
+  const a = hexToOklch(hexA), b = hexToOklch(hexB);
+  let dh = b.H - a.H;
+  if (dh > 180) dh -= 360;
+  if (dh < -180) dh += 360;
+  const H = (a.H + dh * t + 360) % 360;
+  const L = a.L + (b.L - a.L) * t;
+  const C = a.C + (b.C - a.C) * t;
+  return oklchToHex(L, C, H);
+}
+
+/* ---------------- WCAG contrast ---------------- */
+function relLuminance(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const lin = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+function contrastRatio(hexA, hexB) {
+  const L1 = relLuminance(hexA), L2 = relLuminance(hexB);
+  const lighter = Math.max(L1, L2), darker = Math.min(L1, L2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+/* Nudges a text color's OKLCH lightness toward black or toward white
+   (whichever direction reaches the target faster) until it clears the
+   target WCAG contrast ratio against a background color, preserving the
+   text color's hue/chroma as closely as possible instead of just
+   snapping to pure black/white. */
+function autoFixTextColor(textHex, bgHex, targetRatio) {
+  targetRatio = targetRatio || 4.5;
+  if (contrastRatio(textHex, bgHex) >= targetRatio) return textHex;
+  const { L, C, H } = hexToOklch(textHex);
+  let best = null, bestRatio = 0;
+  for (const dir of [1, -1]) {
+    let l = L;
+    for (let i = 0; i < 60; i++) {
+      l = clamp(l + dir * 0.017, 0, 1);
+      const candidate = oklchToHex(l, C, H);
+      const ratio = contrastRatio(candidate, bgHex);
+      if (ratio > bestRatio) { bestRatio = ratio; best = candidate; }
+      if (ratio >= targetRatio) return candidate;
+      if (l <= 0 || l >= 1) break;
+    }
+  }
+  const blackRatio = contrastRatio('#000000', bgHex), whiteRatio = contrastRatio('#ffffff', bgHex);
+  if (Math.max(blackRatio, whiteRatio) > bestRatio) return blackRatio > whiteRatio ? '#000000' : '#ffffff';
+  return best || textHex;
+}
+
 /* Exports sized to a generic preset rarely match the requesting device's
    actual screen exactly, so setting the result as a wallpaper leaves
    Android/iOS to stretch or crop it to fit. Exporting at the device's own
@@ -310,16 +399,30 @@ function applyTheme(theme) {
      etc. (declared later in this file) have been initialized. */
   if (theme === 'aurora') setTimeout(updateAuroraBackdrop, 0);
 }
+/* Aurora Bento is a Pro-only theme. isProUnlocked() itself lives further
+   down this file (with the rest of the license system), but this check is
+   just a bare localStorage read, so it's safe to inline here regardless of
+   definition order. */
+function isThemeUnlocked(theme) {
+  if (theme !== 'aurora') return true;
+  try { return localStorage.getItem('gradii_pro_unlocked') === '1'; } catch (e) { return false; }
+}
 (function initTheme() {
   const saved = localStorage.getItem('gradii_theme');
-  const preferred = THEME_CYCLE.includes(saved)
+  let preferred = THEME_CYCLE.includes(saved)
     ? saved
     : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  if (!isThemeUnlocked(preferred)) preferred = 'dark';
   applyTheme(preferred);
 })();
 themeToggle.addEventListener('click', () => {
   const current = document.documentElement.getAttribute('data-theme');
-  const next = THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length];
+  let next = THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length];
+  if (!isThemeUnlocked(next)) {
+    showToast('Aurora Bento is a Pro theme — unlock for ₹39');
+    if (typeof openProModal === 'function') openProModal();
+    next = THEME_CYCLE[(THEME_CYCLE.indexOf(next) + 1) % THEME_CYCLE.length];
+  }
   applyTheme(next);
   animateThemeIcon(themeToggle);
 });
@@ -435,6 +538,7 @@ let gradientState = {
   shape: 'ellipse',
   posX: 50,
   posY: 50,
+  oklch: false,
   stops: [
     { color: '#6d5dfc', pos: 0 },
     { color: '#ff6b9d', pos: 100 },
@@ -455,8 +559,27 @@ const posYValue = document.getElementById('posYValue');
 const stopsList = document.getElementById('stopsList');
 const presetsGrid = document.getElementById('presetsGrid');
 
+/* When state.oklch is on, expand the user's stops into many intermediate
+   OKLCH-mixed stops instead of relying on the browser/canvas's default RGB
+   interpolation, which tends to muddy through grey-brown between saturated
+   colors. The result is plain hex stops, so it stays portable in copied CSS
+   even where "in oklch" gradient syntax isn't supported. */
+function expandStopsOklch(stops, enabled) {
+  if (!enabled || stops.length < 2) return stops;
+  const STEPS = 10;
+  const out = [];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i], b = stops[i + 1];
+    for (let j = (i === 0 ? 0 : 1); j <= STEPS; j++) {
+      const t = j / STEPS;
+      out.push({ color: mixOklch(a.color, b.color, t), pos: a.pos + (b.pos - a.pos) * t });
+    }
+  }
+  return out;
+}
+
 function buildGradientCss(state) {
-  const stops = [...state.stops].sort((a, b) => a.pos - b.pos);
+  const stops = expandStopsOklch([...state.stops].sort((a, b) => a.pos - b.pos), state.oklch);
   const stopsStr = stops.map(s => `${s.color} ${Math.round(s.pos)}%`).join(', ');
   if (state.type === 'linear') return `linear-gradient(${state.angle}deg, ${stopsStr})`;
   if (state.type === 'radial') return `radial-gradient(${state.shape} at ${state.posX}% ${state.posY}%, ${stopsStr})`;
@@ -467,6 +590,7 @@ function renderGradientPreview() {
   const css = buildGradientCss(gradientState);
   gradientPreview.style.background = css;
   cssOutput.textContent = `background: ${css};`;
+  updateGradientContrast();
 }
 
 function renderControlVisibility() {
@@ -555,6 +679,7 @@ function randomizeGradient() {
     gradientState.posX = Math.round(20 + Math.random() * 60);
     gradientState.posY = Math.round(20 + Math.random() * 60);
   }
+  applyBrandKitToGradient();
   syncGradientControlsFromState();
   renderStopsList();
   renderGradientPreview();
@@ -659,7 +784,7 @@ function linearGradientEndpoints(w, h, angleDeg) {
 }
 
 function drawGradientToCanvas(ctx, w, h, state) {
-  const stops = [...state.stops].sort((a, b) => a.pos - b.pos);
+  const stops = expandStopsOklch([...state.stops].sort((a, b) => a.pos - b.pos), state.oklch);
   let grad;
   if (state.type === 'linear') {
     const { x1, y1, x2, y2 } = linearGradientEndpoints(w, h, state.angle);
@@ -698,6 +823,7 @@ document.getElementById('btnDownloadPng').addEventListener('click', () => {
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
+  drawWatermark(ctx, canvas.width, canvas.height);
   downloadCanvasPng(canvas, 'gradient.png');
   showToast('Gradient PNG downloaded');
 });
@@ -725,6 +851,12 @@ gradientExportMenu.addEventListener('click', (e) => {
     showToast('SCSS file downloaded');
   } else if (btn.dataset.export === 'tailwind') {
     copyText(`bg-[${tailwindArbitraryValue(css)}]`, 'Tailwind class copied');
+  } else if (btn.dataset.export === 'tokens') {
+    exportGradientAsTokens();
+    showToast('Design tokens downloaded');
+  } else if (btn.dataset.export === 'figma') {
+    exportGradientAsFigmaVariables();
+    showToast('Figma variables downloaded');
   }
   gradientExportMenu.classList.remove('open');
 });
@@ -751,7 +883,39 @@ const harmonySelect = document.getElementById('harmonySelect');
 const savedPalettesEl = document.getElementById('savedPalettes');
 const savedEmptyHint = document.getElementById('savedEmptyHint');
 
+/* "Cohesive (OKLCH)" honors every locked swatch, not just one: unlocked
+   slots interpolate between whichever locked anchors are nearest on
+   either side (in OKLCH, so the blend stays perceptually smooth), and
+   slots past the last/before the first locked anchor extend its hue
+   with a gentle, consistent step instead of drifting randomly. With no
+   locks at all, it falls back to an OKLCH-even spread around one random
+   hue — still more cohesive than picking each hue independently. */
+function generateCohesiveOklchPalette(count, existingColors, locked) {
+  const lockedEntries = locked
+    .map((l, i) => (l && existingColors[i] ? { i, color: existingColors[i] } : null))
+    .filter(Boolean);
+  if (!lockedEntries.length) {
+    const baseHue = Math.random() * 360;
+    return Array.from({ length: count }, (_, i) => oklchToHex(0.42 + (i / Math.max(1, count - 1)) * 0.4, 0.14, baseHue + i * (360 / count) * 0.35));
+  }
+  return Array.from({ length: count }, (_, i) => {
+    const exact = lockedEntries.find(e => e.i === i);
+    if (exact) return exact.color;
+    const before = [...lockedEntries].reverse().find(e => e.i < i);
+    const after = lockedEntries.find(e => e.i > i);
+    if (before && after) {
+      const t = (i - before.i) / (after.i - before.i);
+      return mixOklch(before.color, after.color, t);
+    }
+    const anchor = before || after;
+    const { L, C, H } = hexToOklch(anchor.color);
+    const step = (i - anchor.i) * 18;
+    return oklchToHex(clamp(L + (Math.random() - 0.5) * 0.08, 0.15, 0.92), C, H + step);
+  });
+}
+
 function generatePaletteColors(harmony, count, existingColors, locked) {
+  if (harmony === 'cohesiveOklch') return generateCohesiveOklchPalette(count, existingColors, locked);
   const lockedIndex = locked.findIndex(l => l);
   const baseHue = lockedIndex >= 0 ? hexToHsl(existingColors[lockedIndex]).h : Math.random() * 360;
   let hues;
@@ -941,8 +1105,14 @@ function renderSavedPalettes() {
 
 document.getElementById('btnSavePalette').addEventListener('click', () => {
   const list = getSavedPalettes();
+  const cap = isProUnlocked() ? 50 : 5;
+  if (list.length >= cap) {
+    showToast(`Free tier keeps your last ${cap} palettes — unlock Pro for up to 50`);
+    openProModal();
+    return;
+  }
   list.unshift({ id: Date.now(), colors: [...paletteState.colors] });
-  setSavedPalettes(list.slice(0, 24));
+  setSavedPalettes(list.slice(0, 50));
   renderSavedPalettes();
   showToast('Palette saved');
 });
@@ -971,6 +1141,7 @@ function exportPaletteAsPng(colors) {
     ctx.textAlign = 'center';
     ctx.fillText(color.toUpperCase(), i * swatchW + swatchW / 2, h - 30);
   });
+  drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, 'palette.png');
 }
 
@@ -1078,6 +1249,8 @@ exportMenu.addEventListener('click', (e) => {
   if (btn.dataset.export === 'gpl') exportPaletteAsGpl(colors);
   if (btn.dataset.export === 'json') exportPaletteAsJson(colors);
   if (btn.dataset.export === 'text') exportPaletteAsText(colors);
+  if (btn.dataset.export === 'tokens') exportPaletteAsTokens(colors);
+  if (btn.dataset.export === 'figma') exportPaletteAsFigmaVariables(colors);
   exportMenu.classList.remove('open');
   showToast('Palette exported');
 });
@@ -1179,6 +1352,7 @@ function renderMeshPreview() {
     `background-color: ${meshState.baseColor};\n` +
     `background-image:\n${cssLayers};\n` +
     `background-blend-mode: ${meshState.blendMode};`;
+  updateMeshContrast();
 }
 
 function renderMeshBlobsList() {
@@ -1264,6 +1438,7 @@ function renderMeshPresets() {
 function randomizeMesh() {
   meshState.baseColor = randomHex();
   meshState.points = randomMeshPoints(meshState.points.length || 5);
+  applyBrandKitToMesh();
   renderMeshBlobsList();
   renderMeshPreview();
   quirkyBounce(document.querySelector('#panel-mesh .preview-frame'));
@@ -1302,17 +1477,12 @@ function hexToRgba(hex, alpha) {
   return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`;
 }
 
-document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
-  const canvas = document.getElementById('exportCanvas');
-  const { w, h } = getDeviceExportSize();
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
+function drawMeshToCanvas(ctx, w, h, state) {
   ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = meshState.baseColor;
+  ctx.fillStyle = state.baseColor;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = MESH_COMPOSITE_MAP[meshState.blendMode] || 'source-over';
-  meshState.points.forEach(p => {
+  ctx.globalCompositeOperation = MESH_COMPOSITE_MAP[state.blendMode] || 'source-over';
+  state.points.forEach(p => {
     const cx = w * p.x / 100, cy = h * p.y / 100;
     const r = (p.size / 100) * Math.max(w, h) * 0.8;
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
@@ -1322,6 +1492,16 @@ document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
     ctx.fillRect(0, 0, w, h);
   });
   ctx.globalCompositeOperation = 'source-over';
+}
+
+document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
+  const canvas = document.getElementById('exportCanvas');
+  const { w, h } = getDeviceExportSize();
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  drawMeshToCanvas(ctx, w, h, meshState);
+  drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, 'mesh-gradient.png');
   showToast('Mesh gradient PNG downloaded');
 });
@@ -1595,6 +1775,7 @@ function randomizeWallpaperColors() {
     const h = baseHue + (Math.random() - 0.5) * 150;
     return hslToHex(h, 55 + Math.random() * 35, 45 + Math.random() * 25);
   });
+  applyBrandKitToWallpaper();
   renderWallpaperColorsList();
   if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
   quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
@@ -1641,6 +1822,12 @@ document.getElementById('btnShareWallpaper').addEventListener('click', () => {
 });
 
 document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () => {
+  if (wallpaperResolutionSelect.value !== 'auto' && !isProUnlocked()) {
+    showToast('That resolution is a Pro feature — unlock for ₹39');
+    wallpaperResolutionSelect.value = 'auto';
+    openProModal();
+    return;
+  }
   let w, h;
   if (wallpaperResolutionSelect.value === 'auto') {
     ({ w, h } = getDeviceExportSize());
@@ -1654,8 +1841,42 @@ document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () 
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed);
+  drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `wallpaper-${w}x${h}.png`);
   showToast('Wallpaper PNG downloaded');
+});
+
+/* Opens Android's own "crop and set wallpaper" system UI directly, instead
+   of leaving the user to save the PNG and go find it in a gallery app
+   afterward. Native-app-only: the underlying WallpaperManager intent has
+   no web equivalent, so the button stays hidden outside the APK. */
+const btnSetAsWallpaper = document.getElementById('btnSetAsWallpaper');
+if (isNativeApp() && window.Capacitor.Plugins.WallpaperSetter) {
+  btnSetAsWallpaper.hidden = false;
+}
+btnSetAsWallpaper.addEventListener('click', async () => {
+  const { w, h } = getDeviceExportSize();
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed);
+  drawWatermark(ctx, w, h);
+  canvas.toBlob(async (blob) => {
+    try {
+      const base64 = await blobToBase64(blob);
+      const Filesystem = window.Capacitor.Plugins.Filesystem;
+      const written = await Filesystem.writeFile({
+        path: `wallpaper-${Date.now()}.png`,
+        data: base64,
+        directory: 'CACHE',
+        recursive: true,
+      });
+      await window.Capacitor.Plugins.WallpaperSetter.setWallpaper({ uri: written.uri });
+    } catch (e) {
+      showToast('Could not open wallpaper chooser: ' + (e && e.message ? e.message : 'unknown error'));
+    }
+  }, 'image/png');
 });
 
 document.getElementById('btnRecordWallpaper').addEventListener('click', () => {
@@ -1693,6 +1914,37 @@ document.getElementById('btnRecordWallpaper').addEventListener('click', () => {
   setTimeout(() => recorder.stop(), 6000);
 });
 
+/* Opt-in mic input, present only when the "Audio-reactive" toggle was on at
+   export time. Amplitude from a Web Audio AnalyserNode scales the pattern's
+   effective animation speed each frame, so the wallpaper visibly pulses
+   with ambient sound/music. Falls back to the static speed value if mic
+   access is denied or unavailable — never blocks the wallpaper itself. */
+const AUDIO_REACTIVE_SNIPPET = `
+let audioLevel = 0;
+(function initAudioReactive() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    .then((stream) => {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ctxA = new AC();
+      const source = ctxA.createMediaStreamSource(stream);
+      const analyser = ctxA.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.75;
+      source.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      (function sample() {
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += data[i];
+        audioLevel = (sum / data.length) / 255;
+        requestAnimationFrame(sample);
+      })();
+    })
+    .catch(() => {});
+})();
+`;
+
 function exportWallpaperHtml() {
   const functionsSrc = [wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands, wpDrawFrame]
     .map(fn => fn.toString())
@@ -1702,6 +1954,7 @@ function exportWallpaperHtml() {
     colors: wallpaperState.colors,
     speed: wallpaperState.speed,
   });
+  const audioReactive = document.getElementById('wallpaperAudioReactive').checked;
   const html = `<!doctype html>
 <html>
 <head>
@@ -1718,7 +1971,7 @@ function exportWallpaperHtml() {
 const wallpaperData = ${stateJson};
 
 ${functionsSrc}
-
+${audioReactive ? AUDIO_REACTIVE_SNIPPET : 'let audioLevel = 0;'}
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 function resize() {
@@ -1732,7 +1985,8 @@ let start = null;
 function loop(ts) {
   if (start === null) start = ts;
   const t = (ts - start) / 1000;
-  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, wallpaperData.speed);
+  const speed = wallpaperData.speed * (1 + audioLevel * 2.2);
+  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -1745,7 +1999,8 @@ requestAnimationFrame(loop);
 
 document.getElementById('btnDownloadWallpaperHtml').addEventListener('click', () => {
   exportWallpaperHtml();
-  showToast('Live wallpaper HTML downloaded');
+  const audioOn = document.getElementById('wallpaperAudioReactive').checked;
+  showToast(audioOn ? 'Live wallpaper HTML downloaded — it will ask for mic access' : 'Live wallpaper HTML downloaded');
 });
 
 tabButtons.forEach(btn => {
@@ -1954,10 +2209,15 @@ function decodeState(str) {
   }
 }
 
-function copyShareLink(tab, state) {
+function buildShareUrl(tab, state) {
   const encoded = encodeState(state);
-  if (!encoded) { showToast('Could not create share link'); return; }
-  const url = `${location.origin}${location.pathname}?tab=${tab}&d=${encoded}`;
+  if (!encoded) return null;
+  return `${location.origin}${location.pathname}?tab=${tab}&d=${encoded}`;
+}
+
+function copyShareLink(tab, state) {
+  const url = buildShareUrl(tab, state);
+  if (!url) { showToast('Could not create share link'); return; }
   copyText(url, 'Share link copied');
 }
 
@@ -2026,6 +2286,326 @@ document.addEventListener('keydown', (e) => {
     else if (activeTab === 'wallpaper') randomizeWallpaperColors();
   }
 });
+
+/* ==========================================================================
+   Gradii Pro — license verification (Ed25519, fully offline)
+   ----------------------------------------------------------------
+   The app only ever ships this public key. A license key is
+   base64url(payload) + "." + base64url(signature), signed offline by a
+   private key that never leaves the developer's machine (see
+   gradii-license/keygen.js). Nothing here can mint a new valid key.
+   ========================================================================== */
+
+const GRADII_PUBLIC_KEY_B64 = 'vD8m0b6OYVRq79DDypK8t+GbRbAAVQe3dR9JtOKdguI=';
+
+function b64urlToBytes(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function verifyLicenseKey(key) {
+  try {
+    const parts = key.trim().split('.');
+    if (parts.length !== 2) return { valid: false };
+    const [payloadPart, sigPart] = parts;
+    const payloadBytes = b64urlToBytes(payloadPart);
+    const sigBytes = b64urlToBytes(sigPart);
+    const pubKeyBytes = b64urlToBytes(GRADII_PUBLIC_KEY_B64);
+    if (!window.crypto || !window.crypto.subtle || !window.crypto.subtle.importKey) {
+      return { valid: false, error: 'unsupported' };
+    }
+    const cryptoKey = await crypto.subtle.importKey('raw', pubKeyBytes, { name: 'Ed25519' }, false, ['verify']);
+    const ok = await crypto.subtle.verify('Ed25519', cryptoKey, sigBytes, payloadBytes);
+    if (!ok) return { valid: false };
+    const payload = JSON.parse(new TextDecoder().decode(payloadBytes));
+    if (payload.p !== 'gradii-pro') return { valid: false };
+    return { valid: true, payload };
+  } catch (e) {
+    return { valid: false, error: e.message };
+  }
+}
+
+function isProUnlocked() {
+  try { return localStorage.getItem('gradii_pro_unlocked') === '1'; } catch (e) { return false; }
+}
+
+function setProUnlocked(key, payload) {
+  try {
+    localStorage.setItem('gradii_pro_unlocked', '1');
+    localStorage.setItem('gradii_pro_key', key);
+    localStorage.setItem('gradii_pro_info', JSON.stringify(payload));
+  } catch (e) { /* ignore */ }
+}
+
+/* Drawn onto every free-tier PNG export, bottom-right, skipped entirely
+   once Pro is unlocked. A translucent pill behind the text keeps it
+   legible over any gradient underneath, without needing to sample the
+   background color first. */
+function drawWatermark(ctx, w, h) {
+  if (isProUnlocked()) return;
+  const text = 'Made with Gradii';
+  const fontSize = Math.max(12, Math.round(Math.min(w, h) * 0.024));
+  ctx.save();
+  ctx.font = `600 ${fontSize}px Inter, sans-serif`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+  const pad = fontSize * 0.9;
+  const metrics = ctx.measureText(text);
+  const boxW = metrics.width + pad * 1.6;
+  const boxH = fontSize + pad * 0.9;
+  const x = w - pad * 0.7, y = h - pad * 0.7;
+  const r = boxH / 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath();
+  ctx.moveTo(x - boxW + r, y - boxH);
+  ctx.arcTo(x, y - boxH, x, y, r);
+  ctx.arcTo(x, y, x - boxW, y, r);
+  ctx.arcTo(x - boxW, y, x - boxW, y - boxH, r);
+  ctx.arcTo(x - boxW, y - boxH, x, y - boxH, r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.fillText(text, x - pad * 0.5, y - pad * 0.4);
+  ctx.restore();
+}
+
+const proOverlay = document.getElementById('proOverlay');
+const proLockedView = document.getElementById('proLockedView');
+const proUnlockedView = document.getElementById('proUnlockedView');
+const proRedeemError = document.getElementById('proRedeemError');
+
+function refreshProUI() {
+  const unlocked = isProUnlocked();
+  proLockedView.hidden = unlocked;
+  proUnlockedView.hidden = !unlocked;
+}
+
+function openProModal() {
+  refreshProUI();
+  proOverlay.classList.add('open');
+}
+function closeProModal() { proOverlay.classList.remove('open'); }
+
+document.getElementById('btnOpenPro').addEventListener('click', openProModal);
+document.getElementById('btnClosePro').addEventListener('click', closeProModal);
+proOverlay.addEventListener('click', (e) => { if (e.target === proOverlay) closeProModal(); });
+
+document.getElementById('btnRedeemLicense').addEventListener('click', async () => {
+  const input = document.getElementById('proLicenseInput');
+  const key = input.value.trim();
+  if (!key) return;
+  proRedeemError.hidden = true;
+  const result = await verifyLicenseKey(key);
+  if (result.valid) {
+    setProUnlocked(key, result.payload);
+    refreshProUI();
+    showToast('Gradii Pro unlocked — thank you!');
+    quirkyBounce(proOverlay.querySelector('.pro-modal'));
+  } else {
+    proRedeemError.textContent = result.error === 'unsupported'
+      ? "This app/browser can't verify license keys yet — please update and try again."
+      : "That license key doesn't look right. Double-check and try again, or email for help.";
+    proRedeemError.hidden = false;
+  }
+});
+refreshProUI();
+
+/* ==========================================================================
+   Text contrast checker (Gradient + Mesh)
+   ========================================================================== */
+
+function sampleGradientCenterColor() {
+  const w = 80, h = 80;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  drawGradientToCanvas(ctx, w, h, gradientState);
+  const d = ctx.getImageData(w >> 1, h >> 1, 1, 1).data;
+  return rgbToHex(d[0], d[1], d[2]);
+}
+function sampleMeshCenterColor() {
+  const w = 80, h = 80;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  drawMeshToCanvas(ctx, w, h, meshState);
+  const d = ctx.getImageData(w >> 1, h >> 1, 1, 1).data;
+  return rgbToHex(d[0], d[1], d[2]);
+}
+
+function setupContrastChecker(prefix, sampleFn) {
+  const textInput = document.getElementById(prefix + 'ContrastText');
+  const colorInput = document.getElementById(prefix + 'ContrastColor');
+  const overlay = document.getElementById(prefix + 'ContrastOverlay');
+  const result = document.getElementById(prefix + 'ContrastResult');
+  const ratioEl = document.getElementById(prefix + 'ContrastRatio');
+  const badgeEl = document.getElementById(prefix + 'ContrastBadge');
+  const fixBtn = document.getElementById(prefix + 'ContrastFix');
+
+  function update() {
+    const text = textInput.value;
+    if (!text) { overlay.hidden = true; result.hidden = true; return; }
+    overlay.hidden = false;
+    overlay.textContent = text;
+    overlay.style.color = colorInput.value;
+    const bg = sampleFn();
+    const ratio = contrastRatio(colorInput.value, bg);
+    ratioEl.textContent = ratio.toFixed(2) + ':1';
+    const passAA = ratio >= 4.5, passAAA = ratio >= 7;
+    badgeEl.textContent = passAAA ? 'AAA pass' : passAA ? 'AA pass' : 'Fail';
+    badgeEl.className = 'contrast-badge ' + (passAA ? 'pass' : 'fail');
+    result.hidden = false;
+  }
+
+  textInput.addEventListener('input', update);
+  colorInput.addEventListener('input', update);
+  fixBtn.addEventListener('click', () => {
+    const bg = sampleFn();
+    colorInput.value = autoFixTextColor(colorInput.value, bg, 4.5);
+    update();
+    showToast('Text color adjusted for AA contrast');
+  });
+
+  return update;
+}
+
+const updateGradientContrast = setupContrastChecker('gradient', sampleGradientCenterColor);
+const updateMeshContrast = setupContrastChecker('mesh', sampleMeshCenterColor);
+
+/* ==========================================================================
+   OKLCH smooth interpolation toggle
+   ========================================================================== */
+
+document.getElementById('gradientOklchToggle').addEventListener('change', (e) => {
+  gradientState.oklch = e.target.checked;
+  renderGradientPreview();
+});
+
+/* ==========================================================================
+   Design Tokens (W3C) + Figma Variables export
+   ========================================================================== */
+
+function exportGradientAsTokens() {
+  const tokens = {};
+  gradientState.stops.forEach((s, i) => { tokens[`gradient-stop-${i + 1}`] = { $value: s.color, $type: 'color' }; });
+  tokens['gradient'] = { $value: buildGradientCss(gradientState), $type: 'gradient' };
+  downloadBlob(JSON.stringify(tokens, null, 2), 'gradient.tokens.json', 'application/json');
+}
+function exportGradientAsFigmaVariables() {
+  const variables = gradientState.stops.map((s, i) => ({ name: `gradient/stop-${i + 1}`, type: 'COLOR', value: s.color }));
+  const out = { figmaVariables: { collection: 'Gradii Gradient', modes: ['Default'], variables } };
+  downloadBlob(JSON.stringify(out, null, 2), 'gradient.figma-variables.json', 'application/json');
+}
+function exportPaletteAsTokens(colors) {
+  const tokens = {};
+  colors.forEach((c, i) => { tokens[`palette-${i + 1}`] = { $value: c, $type: 'color' }; });
+  downloadBlob(JSON.stringify(tokens, null, 2), 'palette.tokens.json', 'application/json');
+}
+function exportPaletteAsFigmaVariables(colors) {
+  const variables = colors.map((c, i) => ({ name: `palette/color-${i + 1}`, type: 'COLOR', value: c }));
+  const out = { figmaVariables: { collection: 'Gradii Palette', modes: ['Default'], variables } };
+  downloadBlob(JSON.stringify(out, null, 2), 'palette.figma-variables.json', 'application/json');
+}
+
+/* ==========================================================================
+   QR scan-to-import
+   ========================================================================== */
+
+const qrOverlay = document.getElementById('qrOverlay');
+const qrCodeBox = document.getElementById('qrCodeBox');
+let qrInstance = null;
+
+function showQrFor(tab, state) {
+  const url = buildShareUrl(tab, state);
+  if (!url) { showToast('Could not create share link'); return; }
+  qrCodeBox.innerHTML = '';
+  if (window.QRCode) {
+    qrInstance = new QRCode(qrCodeBox, { text: url, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M });
+  } else {
+    qrCodeBox.textContent = 'QR library failed to load — try again online.';
+  }
+  qrOverlay.classList.add('open');
+}
+document.getElementById('btnCloseQr').addEventListener('click', () => qrOverlay.classList.remove('open'));
+qrOverlay.addEventListener('click', (e) => { if (e.target === qrOverlay) qrOverlay.classList.remove('open'); });
+
+document.getElementById('btnQrGradient').addEventListener('click', () => showQrFor('gradient', gradientState));
+document.getElementById('btnQrMesh').addEventListener('click', () => showQrFor('mesh', meshState));
+document.getElementById('btnQrWallpaper').addEventListener('click', () => showQrFor('wallpaper', wallpaperState));
+document.getElementById('btnQrPalette').addEventListener('click', () => showQrFor('palette', paletteState));
+
+/* ==========================================================================
+   Brand Kit — lock brand colors, keep every generator on-brand
+   ========================================================================== */
+
+let brandKitEnabled = false;
+let brandKitColors = [];
+
+function nearestBrandColor(hex) {
+  if (!brandKitColors.length) return hex;
+  const target = hexToOklab(hex);
+  let best = brandKitColors[0], bestDist = Infinity;
+  brandKitColors.forEach(c => {
+    const lab = hexToOklab(c);
+    const d = (lab.L - target.L) ** 2 + (lab.a - target.a) ** 2 + (lab.b - target.b) ** 2;
+    if (d < bestDist) { bestDist = d; best = c; }
+  });
+  return best;
+}
+function applyBrandKitToGradient() {
+  if (!brandKitEnabled || !brandKitColors.length) return;
+  gradientState.stops.forEach(s => { s.color = nearestBrandColor(s.color); });
+}
+function applyBrandKitToMesh() {
+  if (!brandKitEnabled || !brandKitColors.length) return;
+  meshState.baseColor = nearestBrandColor(meshState.baseColor);
+  meshState.points.forEach(p => { p.color = nearestBrandColor(p.color); });
+}
+function applyBrandKitToWallpaper() {
+  if (!brandKitEnabled || !brandKitColors.length) return;
+  wallpaperState.colors = wallpaperState.colors.map(c => nearestBrandColor(c));
+}
+
+const brandKitToggle = document.getElementById('brandKitToggle');
+const brandKitSwatchesEl = document.getElementById('brandKitSwatches');
+const brandKitHint = document.getElementById('brandKitHint');
+
+function renderBrandKitSwatches() {
+  brandKitSwatchesEl.innerHTML = '';
+  brandKitColors.forEach(c => {
+    const sw = document.createElement('button');
+    sw.className = 'brand-kit-swatch';
+    sw.style.background = c;
+    sw.title = c.toUpperCase();
+    brandKitSwatchesEl.appendChild(sw);
+  });
+  brandKitSwatchesEl.hidden = !brandKitColors.length;
+}
+
+brandKitToggle.addEventListener('change', (e) => {
+  brandKitEnabled = e.target.checked;
+  if (brandKitEnabled) {
+    brandKitColors = [...paletteState.colors];
+    renderBrandKitSwatches();
+    brandKitHint.textContent = brandKitColors.length
+      ? `Locked to your current ${brandKitColors.length}-color palette. Gradient/Mesh/Wallpaper randomizers now stay on-brand.`
+      : 'Generate a palette first, then turn this on to lock it as your brand colors.';
+    try { localStorage.setItem('gradii_brand_kit', JSON.stringify(brandKitColors)); } catch (err) { /* ignore */ }
+  } else {
+    brandKitHint.textContent = 'Lock your brand colors, and every generator (Gradient, Mesh, Wallpaper) stays within them.';
+    brandKitSwatchesEl.hidden = true;
+  }
+});
+(function initBrandKit() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('gradii_brand_kit') || '[]');
+    if (Array.isArray(saved) && saved.length) brandKitColors = saved;
+  } catch (e) { /* ignore */ }
+})();
 
 /* ==========================================================================
    Init
