@@ -161,14 +161,62 @@ function isNativeApp() {
   return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 }
 
+let gradiiAlbumIdPromise = null;
+function getGradiiAlbumId() {
+  if (!gradiiAlbumIdPromise) {
+    gradiiAlbumIdPromise = (async () => {
+      const Media = window.Capacitor.Plugins.Media;
+      const { albums } = await Media.getAlbums();
+      const existing = albums.find(a => a.name === 'Gradii');
+      if (existing) return existing.identifier;
+      await Media.createAlbum({ name: 'Gradii' });
+      const { albums: after } = await Media.getAlbums();
+      const created = after.find(a => a.name === 'Gradii');
+      return created ? created.identifier : undefined;
+    })();
+  }
+  return gradiiAlbumIdPromise;
+}
+
+/* Images/video saved through this go straight into the device's own
+   Gallery app (a "Gradii" album), same as any camera shot — no share
+   sheet in the way. Modern Android doesn't pop a storage permission
+   dialog for this because none is needed: MediaStore write access is
+   granted to every app by default under scoped storage. That's a
+   deliberate platform change, not a missing prompt. */
+async function saveMediaToGallery(blob, filename, isVideo) {
+  const Media = window.Capacitor.Plugins.Media;
+  const base64 = await blobToBase64(blob);
+  const mime = blob.type || (isVideo ? 'video/webm' : 'image/png');
+  const dataUri = `data:${mime};base64,${base64}`;
+  const albumIdentifier = await getGradiiAlbumId().catch(() => undefined);
+  const fileName = filename.replace(/\.[^/.]+$/, '');
+  if (isVideo) {
+    await Media.saveVideo({ path: dataUri, albumIdentifier, fileName });
+  } else {
+    await Media.savePhoto({ path: dataUri, albumIdentifier, fileName });
+  }
+}
+
 /* Inside the packaged Android app, a plain <a download> click on a blob:
    URL is silently swallowed by the WebView — there's no browser download
    manager to hand it to, so nothing happens and nothing asks for
-   permission. The fix isn't a storage permission prompt (modern Android
-   apps avoid that); it's to stage the file via the Filesystem plugin and
-   hand it to the native Share sheet, so the user picks where it goes. */
+   permission. Photos/video go straight to the Gallery via saveMediaToGallery;
+   everything else (palette files, CSS/SCSS text, the standalone wallpaper
+   HTML) is staged via the Filesystem plugin and handed to the native Share
+   sheet, so the user picks where it goes. */
 async function saveFile(blob, filename, mimeType) {
   if (isNativeApp()) {
+    const isImage = /^image\//.test(mimeType);
+    const isVideo = /^video\//.test(mimeType);
+    if ((isImage || isVideo) && window.Capacitor.Plugins.Media) {
+      try {
+        await saveMediaToGallery(blob, filename, isVideo);
+        return;
+      } catch (e) {
+        /* fall through to the Share-sheet path below */
+      }
+    }
     try {
       const Filesystem = window.Capacitor.Plugins.Filesystem;
       const Share = window.Capacitor.Plugins.Share;
