@@ -366,7 +366,29 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   background: var(--bg-alt);
   border: 1px solid var(--border);
   box-shadow: 0 8px 30px var(--shadow);
+  position: relative;
 }
+
+.fullscreen-btn {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(15, 16, 32, 0.45);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+  z-index: 2;
+}
+.fullscreen-btn:hover { transform: scale(1.08); background: rgba(15, 16, 32, 0.65); }
 
 .gradient-preview {
   width: 100%;
@@ -390,6 +412,35 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   cursor: pointer;
   margin: 0;
 }
+
+/* Groups the randomize/share/export actions (and any CSS-output box) into
+   one visually distinct block, set apart from the design controls. */
+.export-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-soft);
+  padding: 16px;
+}
+
+/* "More options" disclosure used to tuck secondary controls (presets,
+   blend mode, etc.) out of the way by default — Hick's Law: fewer visible
+   choices at a glance. */
+details.control-card { padding: 0; overflow: hidden; }
+.more-options-summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 16px 18px;
+  margin-bottom: 0;
+  user-select: none;
+}
+.more-options-summary::-webkit-details-marker { display: none; }
+.more-options-body {
+  padding: 0 18px 18px;
+}
+details[open] .more-options-summary { padding-bottom: 8px; }
 
 .controls-col { display: flex; flex-direction: column; gap: 16px; }
 
@@ -668,6 +719,52 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   margin-top: 40px;
 }
 
+/* ---------------- full screen preview ---------------- */
+.fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+.fullscreen-overlay.open { display: flex; }
+
+.fullscreen-content {
+  width: 100%;
+  height: 100%;
+}
+
+.fullscreen-canvas {
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: auto !important;
+  display: block;
+  border-radius: 0 !important;
+}
+
+.fullscreen-close {
+  position: absolute;
+  top: max(18px, env(safe-area-inset-top, 0px));
+  right: max(18px, env(safe-area-inset-right, 0px));
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 1.2rem;
+  cursor: pointer;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fullscreen-close:hover { background: rgba(255, 255, 255, 0.28); }
+
 /* ---------------- mesh studio ---------------- */
 .mesh-studio { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; align-items: start; }
 .mesh-preview { position: relative; }
@@ -840,7 +937,7 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   .app { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
 
   .topbar { flex-direction: column; align-items: stretch; gap: 12px; padding: 16px 0; }
-  .tabs { justify-content: center; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs { justify-content: flex-start; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; min-width: 0; max-width: 100%; }
   .tabs::-webkit-scrollbar { display: none; }
   .tab-btn { padding: 10px 16px; font-size: 0.86rem; min-height: 40px; flex-shrink: 0; }
   .topbar-actions { justify-content: center; flex-wrap: wrap; }
