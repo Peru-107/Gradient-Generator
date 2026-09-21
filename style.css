@@ -822,7 +822,17 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
 /* ---------------- responsive ---------------- */
 @media (max-width: 900px) {
   .gradient-studio, .mesh-studio, .wallpaper-studio { grid-template-columns: 1fr; }
-  .preview-col { position: static; }
+
+  /* Unwrap .preview-col so its children can be reordered independently:
+     preview image first, then the settings (controls-col), then the
+     download/copy actions — matches how people actually want to scan a
+     tool on a phone (see the result, tweak it, then export it). */
+  .preview-col { position: static; display: contents; }
+  .preview-frame { order: 1; }
+  .controls-col { order: 2; }
+  .preview-actions,
+  .css-output { order: 3; }
+  .preview-col > .hint { order: 4; }
 }
 
 /* Phones and small tablets: bigger touch targets, no input-zoom, tighter layout */
