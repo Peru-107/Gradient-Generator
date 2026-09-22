@@ -373,12 +373,12 @@ function setActiveTab(tab) {
 
 const themeToggle = document.getElementById('themeToggle');
 const themeMenu = document.getElementById('themeMenu');
-const THEME_NAMES = ['light', 'dark', 'aurora', 'bento', 'editorial', 'neon'];
-const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀', bento: '◧', editorial: '—', neon: '⌁', system: '🖥' };
+const THEME_NAMES = ['light', 'dark', 'aurora', 'bento', 'editorial', 'neon', 'outline'];
+const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀', bento: '◧', editorial: '—', neon: '⌁', outline: '◐', system: '🖥' };
 const THEME_LABEL = {
   light: 'Light', dark: 'Dark', aurora: 'Aurora Bento',
   bento: 'Bento Studio', editorial: 'Soft Editorial', neon: 'Neon Console',
-  system: 'Match System',
+  outline: 'High Contrast', system: 'Match System',
 };
 /* "system" isn't a real paintable theme like the six above — it's a mode
    that keeps resolving to whichever of light/dark the OS is currently
@@ -402,7 +402,7 @@ function isThemeUnlocked(theme) {
 function syncNativeStatusBar(theme) {
   const StatusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
   if (!StatusBar) return;
-  const DARK_BG = { dark: '#0e0f1e', aurora: '#08070f', bento: '#f4f3fb', editorial: '#fdfcfa', neon: '#08070c' };
+  const DARK_BG = { dark: '#0e0f1e', aurora: '#08070f', bento: '#f4f3fb', editorial: '#fdfcfa', neon: '#08070c', outline: '#000000' };
   const bg = theme === 'light' ? '#f2f3f8' : (DARK_BG[theme] || '#0e0f1e');
   const style = (theme === 'light' || theme === 'bento' || theme === 'editorial') ? 'LIGHT' : 'DARK';
   StatusBar.setBackgroundColor({ color: bg }).catch(() => {});
@@ -759,6 +759,7 @@ function randomizeGradient() {
   renderStopsList();
   renderGradientPreview();
   quirkyBounce(document.querySelector('#panel-gradient .preview-frame'));
+  pushRecentGenerated('gradient', buildGradientCss(gradientState), gradientState);
 }
 
 function syncGradientControlsFromState() {
@@ -813,6 +814,48 @@ posYSlider.addEventListener('input', () => {
   gradientState.posY = Number(posYSlider.value);
   posYValue.textContent = `${gradientState.posY}%`;
   renderGradientPreview();
+});
+
+/* Drag directly on the preview to set angle (linear) or center position
+   (radial/conic), instead of only via the sliders below. For linear,
+   the angle is the compass bearing (clockwise from up, matching CSS's
+   own linear-gradient(angle) convention) from the preview's center to
+   the pointer — dragging up sets 0deg, right sets 90deg, and so on. */
+gradientPreview.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const rect = gradientPreview.getBoundingClientRect();
+  gradientPreview.setPointerCapture(e.pointerId);
+
+  function update(ev) {
+    if (gradientState.type === 'linear') {
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      const dx = ev.clientX - cx, dy = ev.clientY - cy;
+      if (Math.hypot(dx, dy) < 6) return;
+      const angle = Math.round((Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360);
+      gradientState.angle = angle;
+      angleSlider.value = angle;
+      angleValue.textContent = `${angle}°`;
+    } else {
+      const x = clamp(Math.round(((ev.clientX - rect.left) / rect.width) * 100), 0, 100);
+      const y = clamp(Math.round(((ev.clientY - rect.top) / rect.height) * 100), 0, 100);
+      gradientState.posX = x;
+      gradientState.posY = y;
+      posXSlider.value = x;
+      posYSlider.value = y;
+      posXValue.textContent = `${x}%`;
+      posYValue.textContent = `${y}%`;
+    }
+    renderGradientPreview();
+  }
+  function onUp() {
+    gradientPreview.removeEventListener('pointermove', update);
+    gradientPreview.removeEventListener('pointerup', onUp);
+    gradientPreview.removeEventListener('pointercancel', onUp);
+  }
+  update(e);
+  gradientPreview.addEventListener('pointermove', update);
+  gradientPreview.addEventListener('pointerup', onUp);
+  gradientPreview.addEventListener('pointercancel', onUp);
 });
 
 document.getElementById('btnAddStop').addEventListener('click', addGradientStop);
@@ -1020,6 +1063,125 @@ document.getElementById('btnShareGradient').addEventListener('click', () => {
 });
 
 /* ==========================================================================
+   Saved gradients + crossfade preview
+   ----------------------------------------------------------------
+   Crossfading isn't "layer gradient A over gradient B and let CSS
+   figure it out" — that doesn't produce a real blend. It samples each
+   saved gradient's own color at N even positions (walking its stops,
+   interpolating between whichever two straddle that position), then
+   mixes each pair of samples in OKLCH by the slider's t. That's what
+   "the blend between two designs" actually means color-by-color.
+   ========================================================================== */
+function loadSavedGradients() {
+  try { return JSON.parse(localStorage.getItem('gradii_saved_gradients') || '[]'); }
+  catch (e) { return []; }
+}
+function saveSavedGradients(list) {
+  try { localStorage.setItem('gradii_saved_gradients', JSON.stringify(list)); } catch (e) { /* ignore */ }
+}
+function sampleGradientStopsAt(stops, pos) {
+  if (pos <= stops[0].pos) return stops[0].color;
+  if (pos >= stops[stops.length - 1].pos) return stops[stops.length - 1].color;
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (pos >= stops[i].pos && pos <= stops[i + 1].pos) {
+      const t = (pos - stops[i].pos) / ((stops[i + 1].pos - stops[i].pos) || 1);
+      return mixOklch(stops[i].color, stops[i + 1].color, t);
+    }
+  }
+  return stops[0].color;
+}
+function blendSavedGradients(a, b, t, n) {
+  const stopsA = [...a.stops].sort((x, y) => x.pos - y.pos);
+  const stopsB = [...b.stops].sort((x, y) => x.pos - y.pos);
+  return Array.from({ length: n }, (_, i) => {
+    const pos = Math.round((i / (n - 1)) * 100);
+    const colorA = sampleGradientStopsAt(stopsA, pos);
+    const colorB = sampleGradientStopsAt(stopsB, pos);
+    return { color: mixOklch(colorA, colorB, t), pos };
+  });
+}
+
+let crossfadeSelection = [];
+
+function renderSavedGradients() {
+  const grid = document.getElementById('savedGradientsGrid');
+  const list = loadSavedGradients();
+  document.getElementById('savedGradientsHint').hidden = list.length > 0;
+  document.getElementById('savedGradientsCompareHint').hidden = list.length < 2;
+  grid.innerHTML = '';
+  list.forEach((g, i) => {
+    const el = document.createElement('div');
+    el.className = 'preset-swatch';
+    el.title = 'Click to load this gradient — shift-click two to compare/crossfade';
+    el.style.background = buildGradientCss(g);
+    if (crossfadeSelection.includes(i)) el.style.outline = '3px solid var(--accent)';
+    el.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        const pos = crossfadeSelection.indexOf(i);
+        if (pos >= 0) crossfadeSelection.splice(pos, 1);
+        else {
+          if (crossfadeSelection.length >= 2) crossfadeSelection.shift();
+          crossfadeSelection.push(i);
+        }
+        renderSavedGradients();
+        updateCrossfadeCard();
+        return;
+      }
+      gradientState = JSON.parse(JSON.stringify(g));
+      syncGradientControlsFromState();
+      renderStopsList();
+      renderGradientPreview();
+      showToast('Gradient loaded');
+    });
+    grid.appendChild(el);
+  });
+}
+
+function renderCrossfadePreview() {
+  const list = loadSavedGradients();
+  const a = list[crossfadeSelection[0]], b = list[crossfadeSelection[1]];
+  if (!a || !b) return;
+  const t = Number(document.getElementById('gradientCrossfadeSlider').value) / 100;
+  const blended = blendSavedGradients(a, b, t, 6);
+  const css = `linear-gradient(90deg, ${blended.map(s => `${s.color} ${s.pos}%`).join(', ')})`;
+  document.getElementById('gradientCrossfadePreview').style.background = css;
+}
+
+function updateCrossfadeCard() {
+  const card = document.getElementById('gradientCrossfadeCard');
+  card.hidden = crossfadeSelection.length < 2;
+  if (!card.hidden) renderCrossfadePreview();
+}
+
+document.getElementById('btnSaveGradient').addEventListener('click', () => {
+  const list = loadSavedGradients();
+  list.unshift(JSON.parse(JSON.stringify(gradientState)));
+  if (list.length > 12) list.length = 12;
+  saveSavedGradients(list);
+  renderSavedGradients();
+  showToast('Gradient saved');
+});
+
+document.getElementById('gradientCrossfadeSlider').addEventListener('input', renderCrossfadePreview);
+
+document.getElementById('btnClearCrossfade').addEventListener('click', () => {
+  crossfadeSelection = [];
+  renderSavedGradients();
+  updateCrossfadeCard();
+});
+
+document.getElementById('btnUseCrossfadeBlend').addEventListener('click', () => {
+  const list = loadSavedGradients();
+  const a = list[crossfadeSelection[0]], b = list[crossfadeSelection[1]];
+  if (!a || !b) return;
+  const t = Number(document.getElementById('gradientCrossfadeSlider').value) / 100;
+  gradientState.stops = blendSavedGradients(a, b, t, 6);
+  renderStopsList();
+  renderGradientPreview();
+  showToast('Blend applied');
+});
+
+/* ==========================================================================
    PALETTE STUDIO
    ========================================================================== */
 
@@ -1135,11 +1297,12 @@ function pushPaletteHistory() {
 }
 function loadPaletteHistory(index) {
   const entry = paletteHistory[index];
-  if (!entry) return;
+  if (!entry) return false;
   paletteHistoryIndex = index;
   paletteState.colors = [...entry.colors];
   paletteState.locked = [...entry.locked];
   renderPaletteSwatches();
+  return true;
 }
 
 function generatePalette() {
@@ -1148,6 +1311,7 @@ function generatePalette() {
   renderPaletteSwatches();
   pushPaletteHistory();
   quirkyBounce(paletteSwatchesEl);
+  pushRecentGenerated('palette', `linear-gradient(90deg, ${paletteState.colors.join(', ')})`, paletteState);
 }
 
 function renderPaletteSwatches() {
@@ -1800,15 +1964,48 @@ function renderMeshDragHandles() {
   });
 }
 
+/* Vertical/horizontal guide lines, created once and just toggled/moved
+   during a drag — like Figma/Sketch's alignment guides. */
+let meshGuideV = null, meshGuideH = null;
+function ensureMeshGuides() {
+  if (meshGuideV) return;
+  meshGuideV = document.createElement('div');
+  meshGuideV.className = 'mesh-guide mesh-guide-v';
+  meshGuideH = document.createElement('div');
+  meshGuideH.className = 'mesh-guide mesh-guide-h';
+  meshPreview.appendChild(meshGuideV);
+  meshPreview.appendChild(meshGuideH);
+}
+
+const MESH_SNAP_THRESHOLD = 2.2;
+
 function startMeshBlobDrag(e, index, handle) {
   e.preventDefault();
+  ensureMeshGuides();
   handle.setPointerCapture(e.pointerId);
   handle.classList.add('dragging');
   const rect = meshPreview.getBoundingClientRect();
 
   function onMove(ev) {
-    const x = clamp(((ev.clientX - rect.left) / rect.width) * 100, 0, 100);
-    const y = clamp(((ev.clientY - rect.top) / rect.height) * 100, 0, 100);
+    let x = clamp(((ev.clientX - rect.left) / rect.width) * 100, 0, 100);
+    let y = clamp(((ev.clientY - rect.top) / rect.height) * 100, 0, 100);
+
+    /* Snap targets: every other blob's x/y, plus the center line —
+       whichever is closest within MESH_SNAP_THRESHOLD wins, and its
+       guide line lights up so the snap is visible, not just felt. */
+    const otherXs = [50, ...meshState.points.filter((_, i) => i !== index).map(p => p.x)];
+    const otherYs = [50, ...meshState.points.filter((_, i) => i !== index).map(p => p.y)];
+    let snappedX = null, snappedY = null;
+    for (const ox of otherXs) if (Math.abs(x - ox) < MESH_SNAP_THRESHOLD) { snappedX = ox; break; }
+    for (const oy of otherYs) if (Math.abs(y - oy) < MESH_SNAP_THRESHOLD) { snappedY = oy; break; }
+    if (snappedX !== null) x = snappedX;
+    if (snappedY !== null) y = snappedY;
+
+    meshGuideV.style.left = `${x}%`;
+    meshGuideV.classList.toggle('visible', snappedX !== null);
+    meshGuideH.style.top = `${y}%`;
+    meshGuideH.classList.toggle('visible', snappedY !== null);
+
     meshState.points[index].x = Math.round(x);
     meshState.points[index].y = Math.round(y);
     renderMeshPreview();
@@ -1822,6 +2019,8 @@ function startMeshBlobDrag(e, index, handle) {
   }
   function onUp() {
     handle.classList.remove('dragging');
+    meshGuideV.classList.remove('visible');
+    meshGuideH.classList.remove('visible');
     handle.removeEventListener('pointermove', onMove);
     handle.removeEventListener('pointerup', onUp);
     handle.removeEventListener('pointercancel', onUp);
@@ -1929,6 +2128,7 @@ function randomizeMesh() {
   renderMeshBlobsList();
   renderMeshPreview();
   quirkyBounce(document.querySelector('#panel-mesh .preview-frame'));
+  pushRecentGenerated('mesh', `linear-gradient(135deg, ${meshState.points.map(p => p.color).join(', ')})`, meshState);
 }
 
 document.getElementById('btnAddBlob').addEventListener('click', () => {
@@ -2466,7 +2666,9 @@ function randomizeWallpaperColors(customSeed) {
   syncWallpaperSeedUI();
   if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
   quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
+  if (!suppressRecentGenerated) pushRecentGenerated('wallpaper', `linear-gradient(135deg, ${wallpaperState.colors.join(', ')})`, wallpaperState);
 }
+let suppressRecentGenerated = false;
 
 wallpaperPatternSelect.addEventListener('change', () => {
   wallpaperState.pattern = wallpaperPatternSelect.value;
@@ -2623,6 +2825,94 @@ document.getElementById('btnExtractPaletteFromWallpaper').addEventListener('clic
   pushPaletteHistory();
   setActiveTab('palette');
   showToast('Palette extracted from this wallpaper');
+});
+
+/* Re-rolls only the effects stack, keeping the pattern and colors —
+   for when the look you built is right but you want a different
+   texture/mood on top of it, without losing the colors to a full
+   Randomize Colors. */
+document.getElementById('btnRemixWallpaper').addEventListener('click', () => {
+  const hue = Math.random() * 360;
+  wallpaperState.effects = {
+    grain: Math.random() * 0.4,
+    vignette: Math.random() * 0.5,
+    glow: Math.random() * 0.5,
+    duotone: Math.random() < 0.35
+      ? {
+          shadow: hslToHex(hue, 40 + Math.random() * 20, 8 + Math.random() * 8),
+          highlight: hslToHex(hue + (Math.random() - 0.5) * 40, 30 + Math.random() * 30, 78 + Math.random() * 15),
+        }
+      : null,
+  };
+  syncWallpaperEffectsUI();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
+  showToast('Effects remixed');
+});
+
+/* Generates several randomized variations at the current resolution and
+   zips them for offline browsing, instead of clicking Randomize + PNG
+   download one at a time. Restores the wallpaper you started with
+   afterward — this is meant to produce options, not leave you on
+   whichever variation happened to render last. */
+document.getElementById('btnBatchExportWallpaper').addEventListener('click', async () => {
+  if (!isProUnlocked()) { showToast('Batch export is a Pro feature — unlock for ₹39'); openProModal(); return; }
+  if (typeof JSZip === 'undefined') { showToast('Zip library failed to load — try again online'); return; }
+  const size = resolveExportSize(wallpaperResolutionSelect);
+  if (!size) return;
+  const { w, h } = size;
+  const count = clamp(Number(document.getElementById('wallpaperBatchCount').value) || 6, 2, 12);
+  showToast(`Generating ${count} variations…`);
+
+  const originalColors = [...wallpaperState.colors];
+  const originalSeed = wallpaperState.seed;
+  const zip = new JSZip();
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  suppressRecentGenerated = true;
+  for (let i = 0; i < count; i++) {
+    randomizeWallpaperColors();
+    wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+    if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
+    drawWatermark(ctx, w, h);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    zip.file(`wallpaper-${wallpaperState.seed}.png`, blob);
+  }
+  suppressRecentGenerated = false;
+
+  wallpaperState.colors = originalColors;
+  wallpaperState.seed = originalSeed;
+  renderWallpaperColorsList();
+  syncWallpaperSeedUI();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  saveFile(zipBlob, 'gradii-wallpapers.zip', 'application/zip');
+  showToast(`${count} wallpapers zipped and downloaded`);
+});
+
+/* A single wide image spanning N monitors side by side, rather than N
+   separate files — this is the format desktop OSes actually expect for
+   a "span across displays" wallpaper. The pattern renders continuously
+   across the full width since every wp* pattern positions its blobs/
+   bands as fractions of the canvas's own w/h, so a wider canvas alone
+   is enough to make the scene flow across the monitor seams instead of
+   visibly repeating per-monitor. */
+document.getElementById('btnMultiMonitorExport').addEventListener('click', () => {
+  if (!isProUnlocked()) { showToast('Multi-monitor export is a Pro feature — unlock for ₹39'); openProModal(); return; }
+  const monitors = Number(document.getElementById('wallpaperMonitorCount').value) || 2;
+  const w = 1920 * monitors, h = 1080;
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
+  drawWatermark(ctx, w, h);
+  downloadCanvasPng(canvas, `wallpaper-${monitors}monitor-${w}x${h}.png`);
+  showToast(`${monitors}-monitor wallpaper downloaded — set your OS wallpaper display mode to "Span"`);
 });
 
 wallpaperModeSeg.addEventListener('click', (e) => {
@@ -2965,9 +3255,9 @@ function handleImageFile(file) {
   reader.onload = (e) => {
     imagePreview.src = e.target.result;
     imagePreviewWrap.hidden = false;
-    imagePreview.onload = () => {
+    imagePreview.onload = async () => {
       if (extractedColors.length) previousExtraction = { colors: extractedColors, mood: computeMoodLabel(extractedColors) };
-      extractedColors = extractDominantColors(imagePreview, 6);
+      extractedColors = await extractDominantColors(imagePreview, 6);
       renderExtractedPalette();
       imageActions.hidden = false;
       const moodBadge = document.getElementById('imageMoodBadge');
@@ -3043,7 +3333,25 @@ function clusterDominantColors(data, numColors) {
   return result.slice(0, numColors).map(c => rgbToHex(c.r, c.g, c.b));
 }
 
-function extractDominantColors(imgEl, numColors) {
+/* Uses the browser's native Shape Detection API when available (Chrome/
+   Edge only — feature-detected, not a required dependency) to find
+   faces and exclude them from sampling. A face's skin tones are rarely
+   what someone means by "colors from this photo" and can otherwise
+   dominate the palette on a portrait shot. Silently no-ops (falls back
+   to sampling the whole image, exactly as before) wherever the API
+   isn't supported, so this only ever improves the result, never breaks it. */
+async function detectFaceRects(imgEl) {
+  if (!('FaceDetector' in window)) return null;
+  try {
+    const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 4 });
+    const faces = await detector.detect(imgEl);
+    return faces.length ? faces : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function extractDominantColors(imgEl, numColors) {
   const maxDim = 150;
   const scale = Math.min(1, maxDim / Math.max(imgEl.naturalWidth, imgEl.naturalHeight));
   const w = Math.max(1, Math.round(imgEl.naturalWidth * scale));
@@ -3053,6 +3361,18 @@ function extractDominantColors(imgEl, numColors) {
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   ctx.drawImage(imgEl, 0, 0, w, h);
+
+  const faces = await detectFaceRects(imgEl);
+  if (faces) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    faces.forEach(f => {
+      const box = f.boundingBox;
+      ctx.fillRect(box.x * scale, box.y * scale, box.width * scale, box.height * scale);
+    });
+    ctx.restore();
+  }
+
   const { data } = ctx.getImageData(0, 0, w, h);
   return clusterDominantColors(data, numColors);
 }
@@ -3491,6 +3811,395 @@ brandKitToggle.addEventListener('change', (e) => {
 })();
 
 /* ==========================================================================
+   Undo / redo (Gradient, Mesh, Wallpaper — Palette has its own history
+   already, reused below rather than duplicated)
+   ----------------------------------------------------------------
+   Rather than hand-instrument every single control in each studio, this
+   listens for any input/change/click inside the studio's own container
+   and takes a debounced JSON snapshot once things settle — so nothing
+   gets missed, and rapid slider drags collapse into one history entry
+   instead of flooding the stack. undo()/redo() flush any pending
+   snapshot first so "act, then immediately Ctrl+Z" always undoes the
+   action that was just taken, not a stale one still waiting in the
+   debounce window. ========================================================================== */
+function createStudioHistory(containerSelector, getState, setState, rerender, debounceMs) {
+  let stack = [];
+  let idx = -1;
+  let timer = null;
+  let restoring = false;
+
+  function snapshotNow() {
+    if (restoring) return;
+    const snap = JSON.stringify(getState());
+    if (idx >= 0 && stack[idx] === snap) return;
+    stack = stack.slice(0, idx + 1);
+    stack.push(snap);
+    if (stack.length > 40) stack.shift();
+    idx = stack.length - 1;
+  }
+  function scheduleSnapshot() {
+    clearTimeout(timer);
+    timer = setTimeout(snapshotNow, debounceMs || 500);
+  }
+  function undo() {
+    clearTimeout(timer);
+    snapshotNow();
+    if (idx <= 0) return false;
+    idx--;
+    restoring = true;
+    setState(JSON.parse(stack[idx]));
+    restoring = false;
+    rerender();
+    return true;
+  }
+  function redo() {
+    clearTimeout(timer);
+    snapshotNow();
+    if (idx >= stack.length - 1) return false;
+    idx++;
+    restoring = true;
+    setState(JSON.parse(stack[idx]));
+    restoring = false;
+    rerender();
+    return true;
+  }
+
+  const container = document.querySelector(containerSelector);
+  if (container) {
+    ['input', 'change', 'click'].forEach(evt => container.addEventListener(evt, scheduleSnapshot));
+  }
+  setTimeout(snapshotNow, 200);
+  return { undo, redo };
+}
+
+const gradientHistory = createStudioHistory(
+  '.gradient-studio',
+  () => gradientState,
+  (s) => { gradientState = s; syncGradientControlsFromState(); renderStopsList(); renderGradientPreview(); },
+  () => renderGradientPreview()
+);
+const meshHistory = createStudioHistory(
+  '.mesh-studio',
+  () => meshState,
+  (s) => { meshState = s; renderMeshBlobsList(); renderMeshPreview(); },
+  () => renderMeshPreview()
+);
+const wallpaperHistory = createStudioHistory(
+  '.wallpaper-studio',
+  () => wallpaperState,
+  (s) => {
+    wallpaperState = s;
+    wallpaperPatternSelect.value = wallpaperState.pattern;
+    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
+    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+    renderWallpaperColorsList();
+    syncWallpaperEffectsUI();
+    syncWallpaperSeedUI();
+  },
+  () => { if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT); }
+);
+
+document.addEventListener('keydown', (e) => {
+  const isUndo = (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z';
+  const isRedo = (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'));
+  if (!isUndo && !isRedo) return;
+  const tag = document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  let handled = false;
+  if (activeTab === 'gradient') handled = isUndo ? gradientHistory.undo() : gradientHistory.redo();
+  else if (activeTab === 'mesh') handled = isUndo ? meshHistory.undo() : meshHistory.redo();
+  else if (activeTab === 'wallpaper') handled = isUndo ? wallpaperHistory.undo() : wallpaperHistory.redo();
+  else if (activeTab === 'palette') handled = isUndo ? loadPaletteHistory(paletteHistoryIndex - 1) : loadPaletteHistory(paletteHistoryIndex + 1);
+  if (handled) { e.preventDefault(); showToast(isUndo ? 'Undo' : 'Redo'); }
+});
+
+/* ==========================================================================
+   Cross-studio "recently generated" strip
+   ----------------------------------------------------------------
+   Separate from each studio's own undo history: this only captures the
+   moment of a deliberate Randomize/Generate, across all four studios in
+   one shared, always-visible strip — so a good result from three
+   randomizes ago is still one click away even after switching tabs,
+   without having to remember which studio it came from.
+   ========================================================================== */
+let recentGenerated = [];
+
+function pushRecentGenerated(tab, thumbnailCss, state) {
+  recentGenerated.unshift({ tab, thumbnailCss, state: JSON.parse(JSON.stringify(state)) });
+  if (recentGenerated.length > 15) recentGenerated.length = 15;
+  renderRecentStrip();
+}
+
+function renderRecentStrip() {
+  const strip = document.getElementById('recentGeneratedStrip');
+  strip.hidden = recentGenerated.length === 0;
+  strip.innerHTML = '';
+  recentGenerated.forEach((entry, i) => {
+    const el = document.createElement('button');
+    el.className = 'recent-thumb';
+    el.style.background = entry.thumbnailCss;
+    el.title = `${entry.tab.charAt(0).toUpperCase() + entry.tab.slice(1)} — click to restore`;
+    el.addEventListener('click', () => restoreRecentGenerated(i));
+    strip.appendChild(el);
+  });
+}
+
+function restoreRecentGenerated(i) {
+  const entry = recentGenerated[i];
+  if (!entry) return;
+  const state = JSON.parse(JSON.stringify(entry.state));
+  if (entry.tab === 'gradient') {
+    gradientState = state;
+    syncGradientControlsFromState();
+    renderStopsList();
+    renderGradientPreview();
+  } else if (entry.tab === 'palette') {
+    paletteState = state;
+    renderPaletteSwatches();
+  } else if (entry.tab === 'mesh') {
+    meshState = state;
+    renderMeshBlobsList();
+    renderMeshPreview();
+  } else if (entry.tab === 'wallpaper') {
+    wallpaperState = state;
+    wallpaperPatternSelect.value = wallpaperState.pattern;
+    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
+    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+    renderWallpaperColorsList();
+    syncWallpaperEffectsUI();
+    syncWallpaperSeedUI();
+    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  }
+  setActiveTab(entry.tab);
+  showToast('Restored from recent');
+}
+
+/* ==========================================================================
+   Projects — a named bundle of all four studios' state at once
+   ========================================================================== */
+function loadProjects() {
+  try { return JSON.parse(localStorage.getItem('gradii_projects') || '[]'); } catch (e) { return []; }
+}
+function saveProjectsList(list) {
+  try { localStorage.setItem('gradii_projects', JSON.stringify(list)); } catch (e) { /* ignore */ }
+}
+function saveCurrentAsProject(name) {
+  const list = loadProjects();
+  list.unshift({
+    name: name || `Project — ${new Date().toLocaleString()}`,
+    savedAt: Date.now(),
+    gradient: JSON.parse(JSON.stringify(gradientState)),
+    palette: JSON.parse(JSON.stringify(paletteState)),
+    mesh: JSON.parse(JSON.stringify(meshState)),
+    wallpaper: JSON.parse(JSON.stringify(wallpaperState)),
+  });
+  if (list.length > 20) list.length = 20;
+  saveProjectsList(list);
+}
+function loadProject(index) {
+  const list = loadProjects();
+  const p = list[index];
+  if (!p) return;
+  gradientState = p.gradient;
+  paletteState = p.palette;
+  meshState = p.mesh;
+  wallpaperState = p.wallpaper;
+  syncGradientControlsFromState();
+  renderStopsList();
+  renderGradientPreview();
+  renderPaletteSwatches();
+  renderMeshBlobsList();
+  renderMeshPreview();
+  wallpaperPatternSelect.value = wallpaperState.pattern;
+  wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
+  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+  renderWallpaperColorsList();
+  syncWallpaperEffectsUI();
+  syncWallpaperSeedUI();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  showToast(`Loaded project "${p.name}"`);
+}
+
+function renderProjectsList() {
+  const list = loadProjects();
+  const container = document.getElementById('projectsList');
+  container.innerHTML = '';
+  if (!list.length) {
+    container.innerHTML = '<p class="hint" style="padding:0 4px;">No projects saved yet.</p>';
+    return;
+  }
+  list.forEach((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'project-item';
+    const swatchColors = (p.wallpaper && p.wallpaper.colors) || (p.gradient && p.gradient.stops.map(s => s.color)) || [];
+    el.innerHTML = `
+      <div class="project-item-swatches">${swatchColors.slice(0, 4).map(c => `<span class="project-item-swatch" style="background:${c}"></span>`).join('')}</div>
+      <div class="project-item-info">
+        <div class="project-item-name">${p.name}</div>
+        <div class="project-item-date">${new Date(p.savedAt).toLocaleDateString()}</div>
+      </div>
+      <button class="project-item-remove" title="Delete">✕</button>
+    `;
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.project-item-remove')) return;
+      loadProject(i);
+      closeCommandPalette();
+      document.getElementById('projectsOverlay').hidden = true;
+    });
+    el.querySelector('.project-item-remove').addEventListener('click', () => {
+      const l = loadProjects();
+      l.splice(i, 1);
+      saveProjectsList(l);
+      renderProjectsList();
+    });
+    container.appendChild(el);
+  });
+}
+
+function openProjectsModal() {
+  document.getElementById('projectsOverlay').hidden = false;
+  renderProjectsList();
+}
+document.getElementById('btnCloseProjects').addEventListener('click', () => {
+  document.getElementById('projectsOverlay').hidden = true;
+});
+document.getElementById('projectsOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'projectsOverlay') document.getElementById('projectsOverlay').hidden = true;
+});
+document.getElementById('btnSaveProject').addEventListener('click', () => {
+  const name = document.getElementById('projectNameInput').value.trim();
+  saveCurrentAsProject(name);
+  document.getElementById('projectNameInput').value = '';
+  renderProjectsList();
+  showToast('Project saved');
+});
+
+/* ==========================================================================
+   Command palette (⌘K / Ctrl+K)
+   ========================================================================== */
+const COMMANDS = [
+  { icon: '🎨', label: 'Switch to Gradient Studio', hint: '1', action: () => setActiveTab('gradient') },
+  { icon: '🎨', label: 'Switch to Palette Studio', hint: '2', action: () => setActiveTab('palette') },
+  { icon: '🎨', label: 'Switch to Mesh Studio', hint: '3', action: () => setActiveTab('mesh') },
+  { icon: '🎨', label: 'Switch to Wallpaper Studio', hint: '4', action: () => setActiveTab('wallpaper') },
+  { icon: '🎨', label: 'Switch to Image Extract', hint: '5', action: () => setActiveTab('image') },
+  {
+    icon: '🎲', label: 'Randomize current studio', hint: 'Space', action: () => {
+      if (activeTab === 'palette') generatePalette();
+      else if (activeTab === 'gradient') randomizeGradient();
+      else if (activeTab === 'mesh') randomizeMesh();
+      else if (activeTab === 'wallpaper') randomizeWallpaperColors();
+    },
+  },
+  {
+    icon: '↩', label: 'Undo', hint: '⌘Z', action: () => {
+      if (activeTab === 'gradient') gradientHistory.undo();
+      else if (activeTab === 'mesh') meshHistory.undo();
+      else if (activeTab === 'wallpaper') wallpaperHistory.undo();
+      else if (activeTab === 'palette') loadPaletteHistory(paletteHistoryIndex - 1);
+    },
+  },
+  {
+    icon: '↪', label: 'Redo', hint: '⌘⇧Z', action: () => {
+      if (activeTab === 'gradient') gradientHistory.redo();
+      else if (activeTab === 'mesh') meshHistory.redo();
+      else if (activeTab === 'wallpaper') wallpaperHistory.redo();
+      else if (activeTab === 'palette') loadPaletteHistory(paletteHistoryIndex + 1);
+    },
+  },
+  { icon: '★', label: 'Save current gradient', action: () => document.getElementById('btnSaveGradient').click() },
+  { icon: '★', label: 'Save current palette', action: () => document.getElementById('btnSavePalette').click() },
+  { icon: '📋', label: 'Copy gradient CSS', action: () => document.getElementById('btnCopyCss').click() },
+  {
+    icon: '⬇', label: 'Download current tab as PNG', action: () => {
+      const map = { gradient: 'btnDownloadPng', mesh: 'btnDownloadMeshPng', wallpaper: 'btnDownloadWallpaperPng' };
+      const id = map[activeTab];
+      if (id) document.getElementById(id).click(); else showToast('No PNG export on this tab');
+    },
+  },
+  {
+    icon: '🔗', label: 'Copy share link for current tab', action: () => {
+      const map = { gradient: 'btnShareGradient', palette: 'btnSharePalette', mesh: 'btnShareMesh', wallpaper: 'btnShareWallpaper' };
+      const id = map[activeTab];
+      if (id) document.getElementById(id).click(); else showToast('No share link on this tab');
+    },
+  },
+  { icon: '🌙', label: 'Theme: Light', action: () => applyTheme('light') },
+  { icon: '✦', label: 'Theme: Dark', action: () => applyTheme('dark') },
+  { icon: '🖥', label: 'Theme: Match System', action: () => applyTheme('system') },
+  { icon: '⭐', label: 'Open Gradii Pro', action: () => openProModal() },
+  { icon: '📁', label: 'Open Projects (save/load a whole session)', action: () => openProjectsModal() },
+  { icon: '📁', label: 'Save current session as a Project', action: () => { openProjectsModal(); setTimeout(() => document.getElementById('projectNameInput').focus(), 50); } },
+  { icon: '🎨', label: 'Extract palette from wallpaper', action: () => document.getElementById('btnExtractPaletteFromWallpaper').click() },
+  { icon: '🔀', label: 'Remix wallpaper effects', action: () => document.getElementById('btnRemixWallpaper').click() },
+  { icon: '📦', label: 'Batch export wallpapers', action: () => document.getElementById('btnBatchExportWallpaper').click() },
+];
+
+let commandActiveIndex = 0;
+let commandFiltered = COMMANDS;
+
+function renderCommandList() {
+  const list = document.getElementById('commandList');
+  list.innerHTML = '';
+  if (!commandFiltered.length) {
+    list.innerHTML = '<div class="command-empty">No matching commands</div>';
+    return;
+  }
+  commandFiltered.forEach((cmd, i) => {
+    const el = document.createElement('div');
+    el.className = 'command-item' + (i === commandActiveIndex ? ' active' : '');
+    el.innerHTML = `<span class="command-icon">${cmd.icon}</span><span>${cmd.label}</span>${cmd.hint ? `<span class="command-hint">${cmd.hint}</span>` : ''}`;
+    el.addEventListener('click', () => runCommand(cmd));
+    list.appendChild(el);
+  });
+}
+
+function runCommand(cmd) {
+  closeCommandPalette();
+  cmd.action();
+}
+
+function openCommandPalette() {
+  document.getElementById('commandPaletteOverlay').hidden = false;
+  const input = document.getElementById('commandInput');
+  input.value = '';
+  commandFiltered = COMMANDS;
+  commandActiveIndex = 0;
+  renderCommandList();
+  setTimeout(() => input.focus(), 30);
+}
+function closeCommandPalette() {
+  document.getElementById('commandPaletteOverlay').hidden = true;
+}
+
+document.getElementById('commandInput').addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase().trim();
+  commandFiltered = q ? COMMANDS.filter(c => c.label.toLowerCase().includes(q)) : COMMANDS;
+  commandActiveIndex = 0;
+  renderCommandList();
+});
+
+document.getElementById('commandInput').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); commandActiveIndex = Math.min(commandActiveIndex + 1, commandFiltered.length - 1); renderCommandList(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); commandActiveIndex = Math.max(commandActiveIndex - 1, 0); renderCommandList(); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (commandFiltered[commandActiveIndex]) runCommand(commandFiltered[commandActiveIndex]); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeCommandPalette(); }
+});
+
+document.getElementById('commandPaletteOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'commandPaletteOverlay') closeCommandPalette();
+});
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    const overlay = document.getElementById('commandPaletteOverlay');
+    if (overlay.hidden) openCommandPalette(); else closeCommandPalette();
+  }
+});
+document.getElementById('btnOpenCommandPalette').addEventListener('click', openCommandPalette);
+
+/* ==========================================================================
    Init
    ========================================================================== */
 
@@ -3500,6 +4209,7 @@ function init() {
   renderGradientPreview();
   renderPresetTagFilter();
   renderPresets();
+  renderSavedGradients();
 
   ensurePaletteArrays();
   paletteState.colors = generatePaletteColors('random', paletteState.count, [], paletteState.locked);

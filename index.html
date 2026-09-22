@@ -17,6 +17,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.2/anime.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 <div class="bg-orbs" aria-hidden="true">
@@ -52,6 +53,7 @@
         <option value="achromatopsia">👁 Achromatopsia</option>
       </select>
       <button id="btnEyedropperInfo" class="icon-btn" title="Space bar generates a new random design" aria-hidden="true">⌨</button>
+      <button id="btnOpenCommandPalette" class="icon-btn" title="Command palette (Ctrl/⌘ K) — also opens Projects">⌘</button>
       <button id="btnOpenPro" class="icon-btn pro-btn" title="Gradii Pro">⭐</button>
       <div class="dropdown theme-picker">
         <button id="themeToggle" class="icon-btn" title="Choose theme">🌙</button>
@@ -63,10 +65,13 @@
           <button data-theme-choice="bento"><span class="theme-swatch theme-swatch-bento"></span>Bento Studio <span class="theme-pro-tag">PRO</span></button>
           <button data-theme-choice="editorial"><span class="theme-swatch theme-swatch-editorial"></span>Soft Editorial <span class="theme-pro-tag">PRO</span></button>
           <button data-theme-choice="neon"><span class="theme-swatch theme-swatch-neon"></span>Neon Console <span class="theme-pro-tag">PRO</span></button>
+          <button data-theme-choice="outline"><span class="theme-swatch theme-swatch-outline"></span>High Contrast</button>
         </div>
       </div>
     </div>
   </header>
+
+  <div id="recentGeneratedStrip" class="recent-strip" hidden></div>
 
   <main>
     <!-- ============ GRADIENT STUDIO ============ -->
@@ -78,6 +83,7 @@
             <div id="gradientPreview" class="gradient-preview"></div>
             <button class="fullscreen-btn" id="btnFullscreenGradient" title="Full screen preview" aria-label="Full screen preview">⤢</button>
           </div>
+          <p class="hint" style="margin-top:-6px;">💡 Drag directly on the preview to set the angle (or center point) instead of using the sliders below.</p>
 
           <div class="export-block">
             <div class="preview-actions">
@@ -180,6 +186,26 @@
               <div id="presetsGrid" class="presets-grid"></div>
             </div>
           </details>
+
+          <div class="control-card">
+            <div class="control-label-row">
+              <label class="control-label">Saved Gradients</label>
+              <button id="btnSaveGradient" class="btn btn-sm">★ Save Current</button>
+            </div>
+            <div id="savedGradientsGrid" class="presets-grid"></div>
+            <p class="hint" id="savedGradientsHint">No saved gradients yet — hit ★ Save Current to keep one here.</p>
+            <p class="hint" id="savedGradientsCompareHint" hidden>Click to load a gradient · shift-click two of them to crossfade between them.</p>
+          </div>
+
+          <div class="control-card" id="gradientCrossfadeCard" hidden>
+            <label class="control-label">Crossfade Preview</label>
+            <div id="gradientCrossfadePreview" class="gradient-preview" style="aspect-ratio:16/6;"></div>
+            <input type="range" id="gradientCrossfadeSlider" min="0" max="100" value="50" class="slider">
+            <div class="preview-actions" style="margin-top:8px;">
+              <button id="btnUseCrossfadeBlend" class="btn btn-primary btn-sm">Use This Blend</button>
+              <button id="btnClearCrossfade" class="btn btn-sm">✕ Clear Selection</button>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -484,6 +510,28 @@
             </div>
             <button id="btnExtractPaletteFromWallpaper" class="btn btn-sm" style="margin-top:8px;">🎨 Extract Palette from This</button>
           </div>
+
+          <div class="control-card">
+            <label class="control-label">More variations</label>
+
+            <p class="hint" style="margin-top:-4px;">Re-roll the effects only, keeping your current colors and pattern.</p>
+            <button id="btnRemixWallpaper" class="btn btn-sm">🔀 Remix Effects</button>
+
+            <p class="hint" style="margin-top:12px;">Generate several randomized versions at once and pick a favorite offline.</p>
+            <div class="preview-actions">
+              <input type="number" id="wallpaperBatchCount" class="text-input" style="width:64px;" min="2" max="12" value="6" title="How many variations">
+              <button id="btnBatchExportWallpaper" class="btn btn-sm">📦 Batch Export (.zip)</button>
+            </div>
+
+            <p class="hint" style="margin-top:12px;">Splits one wide export cleanly across multiple monitors.</p>
+            <div class="preview-actions">
+              <select id="wallpaperMonitorCount" class="select" style="width:auto;">
+                <option value="2">2 monitors</option>
+                <option value="3">3 monitors</option>
+              </select>
+              <button id="btnMultiMonitorExport" class="btn btn-sm">🖥️🖥️ Export Multi-Monitor</button>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -532,6 +580,28 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <div id="offlineIndicator" class="offline-indicator" hidden>📡 Offline — showing the last saved version of the app</div>
+
+<div id="commandPaletteOverlay" class="command-overlay" hidden>
+  <div class="command-box" role="dialog" aria-label="Command palette">
+    <input type="text" id="commandInput" class="command-input" placeholder="Type a command… (e.g. randomize, dark theme, save)" autocomplete="off">
+    <div id="commandList" class="command-list"></div>
+  </div>
+</div>
+
+<div id="projectsOverlay" class="command-overlay" hidden>
+  <div class="command-box projects-box" role="dialog" aria-label="Projects">
+    <div class="projects-header">
+      <strong>Projects</strong>
+      <button id="btnCloseProjects" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <p class="hint" style="padding:0 16px;">Bundles your current gradient, palette, mesh, and wallpaper together under one name, so you can jump back to a whole session at once.</p>
+    <div class="projects-save-row">
+      <input type="text" id="projectNameInput" class="text-input" placeholder="Name this project…">
+      <button id="btnSaveProject" class="btn btn-primary btn-sm">★ Save Current</button>
+    </div>
+    <div id="projectsList" class="projects-list"></div>
+  </div>
+</div>
 <canvas id="exportCanvas" style="display:none"></canvas>
 
 <div id="fullscreenOverlay" class="fullscreen-overlay">
