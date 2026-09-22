@@ -574,6 +574,8 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   color: var(--text);
   font-family: inherit;
   font-size: 0.88rem;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .text-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -1156,7 +1158,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   padding: 14px 16px 8px;
 }
 .projects-save-row { display: flex; gap: 8px; padding: 10px 16px; }
-.projects-save-row .text-input { flex: 1; min-width: 0; }
+.projects-save-row .text-input { flex: 1; min-width: 0; width: 0; }
 .projects-list { max-height: 300px; overflow-y: auto; padding: 6px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
 .project-item {
   display: flex;
@@ -1195,6 +1197,27 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   transition: transform 0.15s ease;
 }
 .recent-thumb:hover { transform: scale(1.1); }
+
+.chapters-list { display: flex; flex-direction: column; gap: 8px; }
+/* Same fix as .seed-row .text-input above: an inline flex:1 alone doesn't
+   stop this input's intrinsic ~20-char width from blowing out the mobile
+   grid track; needs an explicit width: 0 too. */
+#chapterNameInput { min-width: 0; width: 0; }
+.chapter-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+}
+.chapter-item-swatch { width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0; }
+.chapter-item-info { flex: 1; min-width: 0; font-size: 0.82rem; }
+.chapter-item-name { font-weight: 700; }
+.chapter-item-time { color: var(--text-muted); font-size: 0.74rem; }
+.chapter-item-remove { border: none; background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0; }
+.chapter-item-remove:hover { color: #ff5c72; }
 
 .offline-indicator {
   position: fixed;
@@ -1395,7 +1418,12 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 }
 
 .seed-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.seed-row .text-input { flex: 1; min-width: 0; }
+/* width: 0 (not just min-width: 0) is required here: a text input's default
+   ~20-character intrinsic size is used as its min-content contribution to
+   an ancestor grid track's auto-sizing regardless of min-width, so without
+   an explicit width the flex row still blows out the wallpaper-studio grid
+   track at mobile widths (see CLAUDE.md's grid-blowout section). */
+.seed-row .text-input { flex: 1; min-width: 0; width: 0; }
 
 .duotone-colors { display: flex; gap: 10px; margin-top: 4px; }
 .duotone-colors input[type="color"] {
@@ -1547,7 +1575,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 .pro-pay-btn { display: block; width: 100%; text-align: center; text-decoration: none; margin-bottom: 14px; }
 .pro-hint { text-align: left; font-size: 0.78rem; margin-bottom: 14px; }
 .pro-redeem-row { display: flex; gap: 8px; }
-.pro-redeem-row .text-input { flex: 1; }
+.pro-redeem-row .text-input { flex: 1; min-width: 0; width: 0; }
 .pro-error { color: #ff6b6b; text-align: left; margin-top: 8px; margin-bottom: 0; }
 
 /* ---------------- QR modal ---------------- */

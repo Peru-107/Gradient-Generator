@@ -4,9 +4,9 @@ A running wishlist of features discussed but not yet built. Not a commitment
 or a roadmap with dates — just ideas worth remembering. Pull from here when
 picking what to build next; update it as ideas get built or dropped.
 
-Phase 1 and Phase 2 (frontend-only, minus anything text-related) have
-shipped — items below are marked ✅ **Done** with a one-line note on how.
-Phases 3 (APK-native) and 4 (polish) are still open.
+Phase 1, Phase 2, and Phase 3 (frontend-only, minus anything text-related)
+have shipped — items below are marked ✅ **Done** with a one-line note on
+how. Phase 4 (polish) is still open.
 
 ## Gradient Studio
 
@@ -42,12 +42,12 @@ Phases 3 (APK-native) and 4 (polish) are still open.
 21. ✅ **Done** — **Extract palette from wallpaper** — "Extract Palette from This" reuses the same clustering algorithm as Image Extract, fed the wallpaper canvas directly.
 22. ✅ **Done** — **Visible seed/recipe code** — a seed field next to Randomize Colors; same seed always reproduces the same colors (mulberry32 PRNG).
 23. ✅ **Done** — **Batch export** — "Batch Export (.zip)" generates 2–12 randomized variations at the selected resolution and zips them (JSZip); Pro-gated.
-24. **Accelerometer parallax** (APK only) — layers shift slightly as the phone tilts, standard Android live-wallpaper trick.
+24. ✅ **Done** — **Accelerometer parallax** — web-tech only (`DeviceOrientationEvent`), opt-in toggle; only wired into the exported Live HTML File (not the in-app preview, since that's the artifact that actually runs standalone on a phone). Canvas is oversized ~112% and CSS-transformed within that slack based on tilt angle; handles iOS 13+'s permission-on-gesture requirement.
 25. ✅ **Done** — **Loop-perfect toggle** — wraps the time value modulo the loop length so every rendered frame is a pure function of a repeating phase; Record Video and the Live HTML export both honor it.
 26. ✅ **Done** — **Exportable effect "recipe" JSON** — Save/Load Recipe buttons round-trip pattern+colors+speed+effects as a small JSON file.
-27. **Scheduled wallpaper "chapters"** (APK) — auto-rotate different looks by time of day.
+27. ✅ **Partially covered** — **Wallpaper "chapters"** — scoped down from true background rotation (would need native Kotlin/Java WorkManager code, unverifiable without a physical device) to an in-app, localStorage-backed feature: save named looks with a start hour, optionally auto-apply the time-matching one when the app is opened/foregrounded. This limitation is stated directly in the shipped UI copy, not hidden.
 28. **Text/quote overlay layer** — excluded (text-related).
-29. **Time-of-day color shift** (APK) — color temperature drifts with local time.
+29. ✅ **Done** — **Time-of-day color shift** — piecewise-linear warm/cool hue-blend by local hour, applied non-destructively at render time (never mutates stored colors); opt-in toggle.
 30. ✅ **Done** — **Multi-monitor export** — a single wide PNG (1920×N per monitor) spanning 2–3 displays; the pattern renders continuously across the seams since every wp* pattern positions blobs/bands as fractions of canvas w/h. Pro-gated.
 31. ✅ **Done** — **"Remix" a saved design** — "Remix Effects" re-rolls grain/vignette/glow/duotone only, keeping pattern and colors.
 
@@ -80,11 +80,7 @@ Phases 3 (APK-native) and 4 (polish) are still open.
 47. ✅ **Partially covered** — Figma Variables (JSON) export already existed for Gradient and Palette before this round. Sketch format still not built.
 48. ✅ **Partially covered** — the existing QR/share-link mechanism already encodes the full state (pattern+colors+effects, not just a bare link) for every studio, and decodes it back on scan. What's still missing for "fully offline": the QR only round-trips through a URL the site has to serve — true offline (scan-to-decode without the site) would need an in-app camera + QR-decode step, not just generation. Not built.
 
-## Phase 3 — APK-native (needs a real device rebuild+test cycle)
-
-- #24 Accelerometer parallax
-- #27 Scheduled wallpaper "chapters"
-- #29 Time-of-day color shift
+## Phase 3 — shipped (accelerometer parallax, chapters, time-of-day shift — see #24/#27/#29 above for the actual scoping decisions each one landed with)
 
 ## Phase 4 — polish (needs its own design pass)
 
