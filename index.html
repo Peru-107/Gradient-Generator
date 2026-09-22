@@ -53,7 +53,17 @@
       </select>
       <button id="btnEyedropperInfo" class="icon-btn" title="Space bar generates a new random design" aria-hidden="true">⌨</button>
       <button id="btnOpenPro" class="icon-btn pro-btn" title="Gradii Pro">⭐</button>
-      <button id="themeToggle" class="icon-btn" title="Toggle light / dark theme">🌙</button>
+      <div class="dropdown theme-picker">
+        <button id="themeToggle" class="icon-btn" title="Choose theme">🌙</button>
+        <div class="dropdown-menu theme-menu" id="themeMenu">
+          <button data-theme-choice="light"><span class="theme-swatch theme-swatch-light"></span>Light</button>
+          <button data-theme-choice="dark"><span class="theme-swatch theme-swatch-dark"></span>Dark</button>
+          <button data-theme-choice="aurora"><span class="theme-swatch theme-swatch-aurora"></span>Aurora Bento <span class="theme-pro-tag">PRO</span></button>
+          <button data-theme-choice="bento"><span class="theme-swatch theme-swatch-bento"></span>Bento Studio <span class="theme-pro-tag">PRO</span></button>
+          <button data-theme-choice="editorial"><span class="theme-swatch theme-swatch-editorial"></span>Soft Editorial <span class="theme-pro-tag">PRO</span></button>
+          <button data-theme-choice="neon"><span class="theme-swatch theme-swatch-neon"></span>Neon Console <span class="theme-pro-tag">PRO</span></button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -76,6 +86,13 @@
               <button id="btnCopyCss" class="btn">📋 Copy CSS</button>
               <button id="btnShareGradient" class="btn">🔗 Share</button>
               <button id="btnQrGradient" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
+              <select id="gradientResolutionSelect" class="select">
+                <option value="auto" selected>📱 My Screen (recommended)</option>
+                <option value="1170x2532">⭐ Phone (1170×2532)</option>
+                <option value="1920x1080">⭐ Desktop (1920×1080)</option>
+                <option value="3840x2160">⭐ 4K UHD (3840×2160)</option>
+                <option value="1080x1080">⭐ Square (1080×1080)</option>
+              </select>
               <button id="btnDownloadPng" class="btn">⬇ PNG</button>
               <div class="dropdown">
                 <button id="btnExportGradient" class="btn">⬇ More ▾</button>
@@ -245,6 +262,13 @@
               <button id="btnCopyMeshCss" class="btn">📋 Copy CSS</button>
               <button id="btnShareMesh" class="btn">🔗 Share</button>
               <button id="btnQrMesh" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
+              <select id="meshResolutionSelect" class="select">
+                <option value="auto" selected>📱 My Screen (recommended)</option>
+                <option value="1170x2532">⭐ Phone (1170×2532)</option>
+                <option value="1920x1080">⭐ Desktop (1920×1080)</option>
+                <option value="3840x2160">⭐ 4K UHD (3840×2160)</option>
+                <option value="1080x1080">⭐ Square (1080×1080)</option>
+              </select>
               <button id="btnDownloadMeshPng" class="btn">⬇ PNG</button>
             </div>
             <pre id="meshCssOutput" class="css-output" title="Click to copy"></pre>

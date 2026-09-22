@@ -46,6 +46,107 @@
   color-scheme: dark;
 }
 
+/* Bento Studio: light, bold, high-contrast solid cards (no blur/glass) —
+   the "everything visible, nothing shy" look. Same tokens, same component
+   structure as every other theme; only the values change. */
+[data-theme="bento"] {
+  --bg: #f4f3fb;
+  --bg-alt: #ffffff;
+  --bg-soft: #eceafc;
+  --text: #14121f;
+  --text-muted: #625f75;
+  --border: rgba(20, 18, 31, 0.10);
+  --shadow: rgba(30, 20, 80, 0.16);
+  --radius-lg: 18px;
+  --radius-md: 13px;
+  --radius-sm: 9px;
+  color-scheme: light;
+}
+
+/* Soft Editorial: restraint as the aesthetic — near-white ground, hairline
+   rules, no card fills or shadows. bg-alt matches bg almost exactly so
+   structure comes from borders and type, not containers. */
+[data-theme="editorial"] {
+  --bg: #fdfcfa;
+  --bg-alt: #fdfcfa;
+  --bg-soft: #f6f4f0;
+  --text: #17151f;
+  --text-muted: #6b6878;
+  --border: rgba(23, 21, 31, 0.16);
+  --shadow: rgba(20, 18, 15, 0.05);
+  --radius-lg: 4px;
+  --radius-md: 3px;
+  --radius-sm: 2px;
+  color-scheme: light;
+}
+
+/* Neon Console: near-black "pro tool" — one acid accent replaces the
+   brand violet/pink/teal trio entirely, labels go monospace (below). */
+[data-theme="neon"] {
+  --bg: #08070c;
+  --bg-alt: #101018;
+  --bg-soft: #0c0b11;
+  --text: #eaffd6;
+  --text-muted: #7c8a6e;
+  --border: rgba(199, 255, 92, 0.28);
+  --accent: #c7ff5c;
+  --accent-2: #8cffb0;
+  --accent-3: #5cf2ff;
+  --shadow: rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+[data-theme="neon"] body {
+  background-image:
+    linear-gradient(rgba(199, 255, 92, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(199, 255, 92, 0.03) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+[data-theme="neon"] .control-label,
+[data-theme="neon"] .brand-name,
+[data-theme="neon"] .tab-btn,
+[data-theme="neon"] .btn,
+[data-theme="neon"] .select {
+  font-family: var(--font-mono);
+}
+
+/* Bento Studio: a bold "sticker" shadow (solid color offset, not a soft
+   blur) is the one graphic device that reads as "bold and graphic" at a
+   glance without touching any layout — cards keep their normal box model,
+   this only changes how they're painted. */
+[data-theme="bento"] .control-card,
+[data-theme="bento"] .preview-frame,
+[data-theme="bento"] .contrast-card {
+  border: 2px solid var(--text);
+  box-shadow: 4px 4px 0 0 var(--accent);
+}
+[data-theme="bento"] .btn-primary,
+[data-theme="bento"] [id^="btnDownload"],
+[data-theme="bento"] [id^="btnExport"] {
+  border: 2px solid var(--text);
+  box-shadow: 3px 3px 0 0 var(--accent-3, var(--accent));
+}
+
+/* Soft Editorial: cards become plain text blocks separated by a hairline
+   rule, no fill/shadow/radius — the restraint described in the earlier
+   design pass, structurally this time rather than just via bg-alt≈bg
+   (which alone didn't read as different next to Light once the shared
+   .control-card shadow/border/radius were still drawing a card outline). */
+[data-theme="editorial"] .control-card,
+[data-theme="editorial"] .preview-frame,
+[data-theme="editorial"] .contrast-card {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+[data-theme="editorial"] .control-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+}
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 /* Several components toggle visibility with the native `hidden` attribute
@@ -215,6 +316,15 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   gap: 16px;
   padding: 22px 0;
   flex-wrap: wrap;
+  /* Positioned + z-indexed so dropdown menus anchored here (theme picker,
+     export menus) always paint above the studio content below, even if a
+     GSAP intro-reveal tween leaves a harmless identity transform on a
+     topbar descendant — any non-none transform value creates a new
+     stacking context, which otherwise traps a child's z-index inside it
+     instead of letting it compete against unrelated siblings like the
+     gradient preview. */
+  position: relative;
+  z-index: 50;
 }
 
 .brand {
@@ -649,6 +759,21 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 }
 .dropdown-menu button:hover { background: var(--bg-soft); }
 
+.theme-menu { min-width: 200px; }
+.theme-menu button { display: flex; align-items: center; gap: 10px; }
+.theme-menu button.active { background: var(--bg-soft); font-weight: 700; }
+.theme-swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; border: 1px solid var(--border); }
+.theme-swatch-light { background: #f2f3f8; }
+.theme-swatch-dark { background: #171929; }
+.theme-swatch-aurora { background: linear-gradient(135deg, #6d5dfc, #ff6b9d); }
+.theme-swatch-bento { background: linear-gradient(135deg, #ffffff 50%, #6d5dfc 50%); }
+.theme-swatch-editorial { background: #fdfcfa; }
+.theme-swatch-neon { background: #08070c; border-color: #c7ff5c; }
+.theme-pro-tag {
+  margin-left: auto; font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700;
+  letter-spacing: 0.04em; padding: 2px 6px; border-radius: 5px; background: var(--accent); color: #fff;
+}
+
 .palette-swatches {
   display: flex;
   gap: 12px;
@@ -1022,37 +1147,6 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   .export-block { order: 3; }
   .preview-col > .hint { order: 4; }
 
-  /* Aurora Bento: the same flattened elements above become tiles in a
-     2-column grid instead of one stacked column. Preview and the export
-     bar stay full-width (hero + footer); everything else auto-flows into
-     pairs, and any card with dense content (presets, stop lists, the
-     collapsible "more options" panel) spans both columns so it never
-     gets squeezed into a half-width tile. */
-  [data-theme="aurora"] .gradient-studio,
-  [data-theme="aurora"] .mesh-studio,
-  [data-theme="aurora"] .wallpaper-studio {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 10px;
-  }
-  /* .controls-col stays a real box in the base rule above (only .preview-col
-     unwraps there) — flatten it too here so its individual .control-cards
-     become their own grid tiles instead of one tall stacked column. They
-     lose the base rule's order:2 on the wrapper itself once it's gone, so
-     each card gets that same order explicitly, keeping them between the
-     preview (order 1) and the export bar (order 3). */
-  [data-theme="aurora"] .controls-col { display: contents; }
-  [data-theme="aurora"] .controls-col > .control-card { order: 2; }
-  [data-theme="aurora"] .preview-frame,
-  [data-theme="aurora"] .export-block,
-  [data-theme="aurora"] .controls-col > details.control-card,
-  [data-theme="aurora"] .controls-col > .control-card:has(.presets-grid),
-  [data-theme="aurora"] .controls-col > .control-card:has(.stops-list),
-  [data-theme="aurora"] .controls-col > .control-card:has(.mesh-blobs-list),
-  [data-theme="aurora"] .controls-col > .control-card:has(.wallpaper-colors-list) {
-    grid-column: 1 / -1;
-  }
-  [data-theme="aurora"] .preview-col > .hint { grid-column: 1 / -1; }
 }
 
 /* Phones and small tablets: bigger touch targets, no input-zoom, tighter layout */

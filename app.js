@@ -47,6 +47,42 @@ function oklchToHex(L, C, H) {
   const hr = H * Math.PI / 180;
   return oklabToHex(L, C * Math.cos(hr), C * Math.sin(hr));
 }
+/* Whether (L, C, H) maps to a color inside the sRGB gamut, i.e. the
+   linear-light RGB it converts to before clamping is within [0, 1] on
+   every channel — checked directly rather than by converting to hex
+   first, since the hex conversion is exactly the clamping we're trying
+   to detect. */
+function oklchInGamut(L, C, H) {
+  const hr = H * Math.PI / 180;
+  const a = C * Math.cos(hr), b = C * Math.sin(hr);
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+  const lr = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  const lg = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  const lb = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+  const eps = 1e-4;
+  return lr >= -eps && lr <= 1 + eps && lg >= -eps && lg <= 1 + eps && lb >= -eps && lb <= 1 + eps;
+}
+/* Same color, but gamut-mapped by reducing chroma (never lightness or
+   hue) until it's displayable in sRGB. Plain hex conversion instead
+   clamps each RGB channel independently after the fact, which silently
+   drags the hue toward whichever channel clipped hardest — a saturated
+   yellow walked dark enough to pass a contrast check comes out clipped
+   to near-black with a random green/red tinge instead of a rich dark
+   gold, because R and G clip at different points and B never moves.
+   Preserving hue/lightness and only giving up chroma keeps the result
+   recognizably "the same color, adjusted" instead of mystery mud. */
+function oklchToHexInGamut(L, C, H) {
+  if (C <= 0 || oklchInGamut(L, C, H)) return oklchToHex(L, C, H);
+  let lo = 0, hi = C;
+  for (let i = 0; i < 18; i++) {
+    const mid = (lo + hi) / 2;
+    if (oklchInGamut(L, mid, H)) lo = mid; else hi = mid;
+  }
+  return oklchToHex(L, lo, H);
+}
 function mixOklch(hexA, hexB, t) {
   const a = hexToOklch(hexA), b = hexToOklch(hexB);
   let dh = b.H - a.H;
@@ -69,30 +105,41 @@ function contrastRatio(hexA, hexB) {
   const lighter = Math.max(L1, L2), darker = Math.min(L1, L2);
   return (lighter + 0.05) / (darker + 0.05);
 }
-/* Nudges a text color's OKLCH lightness toward black or toward white
-   (whichever direction reaches the target faster) until it clears the
-   target WCAG contrast ratio against a background color, preserving the
-   text color's hue/chroma as closely as possible instead of just
-   snapping to pure black/white. */
+/* Nudges a text color's OKLCH lightness toward whichever of black/white
+   gets there with the smallest change, gamut-mapping each candidate
+   (chroma only, never hue/lightness — see oklchToHexInGamut) so a
+   saturated color walked toward the dark or light end comes out as a
+   rich dark/pale version of itself instead of sRGB-clamping into an
+   arbitrary near-black/near-white with a distorted hue.
+   For many colorful mid-lightness backgrounds, near-black or near-white
+   really is the only way to clear 4.5:1 — that's correct WCAG math, not
+   a bug — but the result should still read as "your color, adjusted,"
+   not an unrelated shade. */
 function autoFixTextColor(textHex, bgHex, targetRatio) {
   targetRatio = targetRatio || 4.5;
   if (contrastRatio(textHex, bgHex) >= targetRatio) return textHex;
   const { L, C, H } = hexToOklch(textHex);
-  let best = null, bestRatio = 0;
+  let winner = null, winnerDist = Infinity;
+  let fallback = null, fallbackRatio = 0;
   for (const dir of [1, -1]) {
     let l = L;
-    for (let i = 0; i < 60; i++) {
-      l = clamp(l + dir * 0.017, 0, 1);
-      const candidate = oklchToHex(l, C, H);
+    for (let i = 0; i < 80; i++) {
+      l = clamp(l + dir * 0.0125, 0, 1);
+      const candidate = oklchToHexInGamut(l, C, H);
       const ratio = contrastRatio(candidate, bgHex);
-      if (ratio > bestRatio) { bestRatio = ratio; best = candidate; }
-      if (ratio >= targetRatio) return candidate;
+      if (ratio > fallbackRatio) { fallbackRatio = ratio; fallback = candidate; }
+      if (ratio >= targetRatio) {
+        const dist = Math.abs(l - L);
+        if (dist < winnerDist) { winnerDist = dist; winner = candidate; }
+        break;
+      }
       if (l <= 0 || l >= 1) break;
     }
   }
+  if (winner) return winner;
   const blackRatio = contrastRatio('#000000', bgHex), whiteRatio = contrastRatio('#ffffff', bgHex);
-  if (Math.max(blackRatio, whiteRatio) > bestRatio) return blackRatio > whiteRatio ? '#000000' : '#ffffff';
-  return best || textHex;
+  if (Math.max(blackRatio, whiteRatio) > fallbackRatio) return blackRatio > whiteRatio ? '#000000' : '#ffffff';
+  return fallback || textHex;
 }
 
 /* Exports sized to a generic preset rarely match the requesting device's
@@ -107,6 +154,22 @@ function getDeviceExportSize(maxDim) {
   let h = Math.round((window.screen.height || window.innerHeight) * dpr);
   const scale = Math.min(1, cap / Math.max(w, h));
   return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+}
+
+/* Shared by the Gradient/Mesh/Wallpaper resolution pickers: "My Screen"
+   (free) resolves to the device's own size, any named preset (Pro-only)
+   parses straight out of its option value. Returns null and shows the
+   upsell if a non-Pro user picks a preset, so callers can bail out. */
+function resolveExportSize(selectEl) {
+  if (selectEl.value !== 'auto' && !isProUnlocked()) {
+    showToast('That resolution is a Pro feature — unlock for ₹39');
+    selectEl.value = 'auto';
+    openProModal();
+    return null;
+  }
+  if (selectEl.value === 'auto') return getDeviceExportSize();
+  const [wStr, hStr] = selectEl.value.split('x');
+  return { w: Number(wStr), h: Number(hStr) };
 }
 
 function hexToRgb(hex) {
@@ -372,59 +435,81 @@ function setActiveTab(tab) {
    ========================================================================== */
 
 const themeToggle = document.getElementById('themeToggle');
-const THEME_CYCLE = ['light', 'dark', 'aurora'];
-const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀' };
-const THEME_TITLE = {
-  light: 'Switch to dark theme',
-  dark: 'Switch to Aurora Bento theme',
-  aurora: 'Switch to light theme',
+const themeMenu = document.getElementById('themeMenu');
+const THEME_NAMES = ['light', 'dark', 'aurora', 'bento', 'editorial', 'neon'];
+const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀', bento: '◧', editorial: '—', neon: '⌁' };
+const THEME_LABEL = {
+  light: 'Light', dark: 'Dark', aurora: 'Aurora Bento',
+  bento: 'Bento Studio', editorial: 'Soft Editorial', neon: 'Neon Console',
 };
+/* Aurora Bento and the three newer looks are Pro-only. isProUnlocked()
+   itself lives further down this file (with the rest of the license
+   system), but this check is just a bare localStorage read, so it's safe
+   to inline here regardless of definition order. */
+const PRO_THEMES = new Set(['aurora', 'bento', 'editorial', 'neon']);
+function isThemeUnlocked(theme) {
+  if (!PRO_THEMES.has(theme)) return true;
+  try { return localStorage.getItem('gradii_pro_unlocked') === '1'; } catch (e) { return false; }
+}
 
 function syncNativeStatusBar(theme) {
   const StatusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
   if (!StatusBar) return;
-  const bg = theme === 'dark' ? '#0e0f1e' : theme === 'aurora' ? '#08070f' : '#f2f3f8';
-  const style = theme === 'light' ? 'LIGHT' : 'DARK';
+  const DARK_BG = { dark: '#0e0f1e', aurora: '#08070f', bento: '#f4f3fb', editorial: '#fdfcfa', neon: '#08070c' };
+  const bg = theme === 'light' ? '#f2f3f8' : (DARK_BG[theme] || '#0e0f1e');
+  const style = (theme === 'light' || theme === 'bento' || theme === 'editorial') ? 'LIGHT' : 'DARK';
   StatusBar.setBackgroundColor({ color: bg }).catch(() => {});
   StatusBar.setStyle({ style }).catch(() => {});
+}
+
+function refreshThemeMenuUI() {
+  const current = document.documentElement.getAttribute('data-theme');
+  themeMenu.querySelectorAll('button[data-theme-choice]').forEach(btn => {
+    const t = btn.dataset.themeChoice;
+    btn.classList.toggle('active', t === current);
+    const proTag = btn.querySelector('.theme-pro-tag');
+    if (proTag) proTag.hidden = !PRO_THEMES.has(t) || isThemeUnlocked(t);
+  });
 }
 
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   themeToggle.textContent = THEME_ICON[theme] || '🌙';
-  themeToggle.title = THEME_TITLE[theme] || 'Toggle theme';
+  themeToggle.title = 'Choose theme (' + (THEME_LABEL[theme] || theme) + ')';
   localStorage.setItem('gradii_theme', theme);
   syncNativeStatusBar(theme);
+  refreshThemeMenuUI();
   /* Deferred: on first load this can fire before gradientState/meshState/
      etc. (declared later in this file) have been initialized. */
   if (theme === 'aurora') setTimeout(updateAuroraBackdrop, 0);
 }
-/* Aurora Bento is a Pro-only theme. isProUnlocked() itself lives further
-   down this file (with the rest of the license system), but this check is
-   just a bare localStorage read, so it's safe to inline here regardless of
-   definition order. */
-function isThemeUnlocked(theme) {
-  if (theme !== 'aurora') return true;
-  try { return localStorage.getItem('gradii_pro_unlocked') === '1'; } catch (e) { return false; }
-}
 (function initTheme() {
   const saved = localStorage.getItem('gradii_theme');
-  let preferred = THEME_CYCLE.includes(saved)
+  let preferred = THEME_NAMES.includes(saved)
     ? saved
     : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   if (!isThemeUnlocked(preferred)) preferred = 'dark';
   applyTheme(preferred);
 })();
-themeToggle.addEventListener('click', () => {
-  const current = document.documentElement.getAttribute('data-theme');
-  let next = THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length];
-  if (!isThemeUnlocked(next)) {
-    showToast('Aurora Bento is a Pro theme — unlock for ₹39');
+themeToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  refreshThemeMenuUI();
+  themeMenu.classList.toggle('open');
+});
+document.addEventListener('click', () => themeMenu.classList.remove('open'));
+themeMenu.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-theme-choice]');
+  if (!btn) return;
+  const choice = btn.dataset.themeChoice;
+  if (!isThemeUnlocked(choice)) {
+    showToast(THEME_LABEL[choice] + ' is a Pro theme — unlock for ₹39');
     if (typeof openProModal === 'function') openProModal();
-    next = THEME_CYCLE[(THEME_CYCLE.indexOf(next) + 1) % THEME_CYCLE.length];
+    themeMenu.classList.remove('open');
+    return;
   }
-  applyTheme(next);
+  applyTheme(choice);
   animateThemeIcon(themeToggle);
+  themeMenu.classList.remove('open');
 });
 
 /* ==========================================================================
@@ -817,14 +902,15 @@ function drawGradientToCanvas(ctx, w, h, state) {
 }
 
 document.getElementById('btnDownloadPng').addEventListener('click', () => {
+  const size = resolveExportSize(document.getElementById('gradientResolutionSelect'));
+  if (!size) return;
   const canvas = document.getElementById('exportCanvas');
-  const { w, h } = getDeviceExportSize();
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = size.w;
+  canvas.height = size.h;
   const ctx = canvas.getContext('2d');
   drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
   drawWatermark(ctx, canvas.width, canvas.height);
-  downloadCanvasPng(canvas, 'gradient.png');
+  downloadCanvasPng(canvas, `gradient-${size.w}x${size.h}.png`);
   showToast('Gradient PNG downloaded');
 });
 
@@ -1495,14 +1581,16 @@ function drawMeshToCanvas(ctx, w, h, state) {
 }
 
 document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
+  const size = resolveExportSize(document.getElementById('meshResolutionSelect'));
+  if (!size) return;
+  const { w, h } = size;
   const canvas = document.getElementById('exportCanvas');
-  const { w, h } = getDeviceExportSize();
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   drawMeshToCanvas(ctx, w, h, meshState);
   drawWatermark(ctx, w, h);
-  downloadCanvasPng(canvas, 'mesh-gradient.png');
+  downloadCanvasPng(canvas, `mesh-${w}x${h}.png`);
   showToast('Mesh gradient PNG downloaded');
 });
 
@@ -1822,20 +1910,9 @@ document.getElementById('btnShareWallpaper').addEventListener('click', () => {
 });
 
 document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () => {
-  if (wallpaperResolutionSelect.value !== 'auto' && !isProUnlocked()) {
-    showToast('That resolution is a Pro feature — unlock for ₹39');
-    wallpaperResolutionSelect.value = 'auto';
-    openProModal();
-    return;
-  }
-  let w, h;
-  if (wallpaperResolutionSelect.value === 'auto') {
-    ({ w, h } = getDeviceExportSize());
-  } else {
-    const [wStr, hStr] = wallpaperResolutionSelect.value.split('x');
-    w = Number(wStr);
-    h = Number(hStr);
-  }
+  const size = resolveExportSize(wallpaperResolutionSelect);
+  if (!size) return;
+  const { w, h } = size;
   const canvas = document.getElementById('exportCanvas');
   canvas.width = w;
   canvas.height = h;
