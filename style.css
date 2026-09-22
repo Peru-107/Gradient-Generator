@@ -48,6 +48,14 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* Several components toggle visibility with the native `hidden` attribute
+   and then set their own `display` in a class rule (e.g. `.contrast-result
+   { display: flex }`) for when they're shown. At equal specificity a class
+   selector beats the browser's own [hidden] rule, so without this override
+   those elements stay visible even while hidden is set. This wins over any
+   single-class display rule unconditionally. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
