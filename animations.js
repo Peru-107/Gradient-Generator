@@ -40,6 +40,11 @@ function showPanel(toPanel) {
   gsap.fromTo(toPanel, { opacity: 0, y: 10 }, {
     opacity: 1, y: 0, duration: 0.32, ease: 'power2.out', clearProps: 'opacity,transform',
   });
+  /* Every tab gets the same staggered-children life the gradient tab's
+     intro reveal has, not just on first load — makes switching tabs feel
+     like arriving somewhere, not just swapping a panel's visibility. */
+  const controls = toPanel.querySelector('.controls-col');
+  if (controls && typeof staggerIn === 'function') staggerIn(controls);
 }
 
 function animateTabSwitch(fromPanel, toPanel) {
@@ -140,7 +145,8 @@ function confettiBurst(x, y, color) {
 
 /* ---------------- Motion One: lightweight press/hover feedback ---------------- */
 
-const PRESS_SELECTOR = '.btn, .seg-btn, .icon-btn, .tab-btn, .swatch, .preset-swatch, .lock-btn, .eyedrop-btn';
+const PRESS_SELECTOR = '.btn, .seg-btn, .icon-btn, .tab-btn, .swatch, .preset-swatch, .lock-btn, ' +
+  '.eyedrop-btn, .select, input[type="color"], .oklch-switch, .brand-kit-swatch, .qr-btn';
 
 let pressedEl = null;
 
@@ -165,4 +171,13 @@ function initGlobalPressFeedback() {
   };
   document.addEventListener('pointerup', release, { passive: true });
   document.addEventListener('pointercancel', release, { passive: true });
+
+  /* Any toggle switch built on the .oklch-switch pattern gets a quick
+     elastic flip on state change — more delightful than the generic
+     press feedback alone for something that's fundamentally an on/off
+     flip, not just a button press. */
+  document.addEventListener('change', (e) => {
+    const toggle = e.target.closest('.oklch-switch');
+    if (toggle) quirkyBounce(toggle);
+  });
 }
