@@ -1187,6 +1187,22 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   scrollbar-width: none;
 }
 .recent-strip::-webkit-scrollbar { display: none; }
+
+.shortcuts-list { max-height: 320px; overflow-y: auto; padding: 6px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+.shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.shortcut-row-label { font-size: 0.85rem; min-width: 0; }
+.shortcut-row-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.shortcut-key {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-width: 56px;
+  text-align: center;
+}
+.shortcut-key.capturing { border-color: var(--accent); color: var(--accent); }
 .recent-thumb {
   width: 44px;
   height: 44px;
@@ -1588,3 +1604,48 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 
 /* ---------------- watermark-gated / pro-gated bits ---------------- */
 .pro-locked-option { opacity: 0.55; }
+
+/* ---------------- first-time onboarding tour ---------------- */
+/* Four independent rectangles dim everything EXCEPT the highlighted
+   control's own box (computed in JS from its getBoundingClientRect) —
+   deliberately not a single full-page overlay with the target promoted
+   above it via z-index. A promoted descendant can't out-rank a sibling
+   overlay once any ancestor (here, .topbar) has its own stacking context
+   (see CLAUDE.md's stacking-context section) — cutting a literal hole
+   sidesteps that failure mode instead of trying to out-number it. These
+   mask/ring elements are body-level siblings of .topbar, so comparing
+   their z-index against .topbar's is a normal same-context comparison,
+   not an attempted escape. */
+.onboarding-mask {
+  position: fixed;
+  z-index: 9000;
+  background: rgba(10, 10, 20, 0.55);
+  /* Deliberately click-through: the dimmed area never traps a click meant
+     for the real app underneath. A click anywhere outside the tour card
+     just ends the tour (see the capture-phase listener in app.js) and
+     still reaches its real target, instead of silently swallowing it. */
+  pointer-events: none;
+}
+.onboarding-ring {
+  position: fixed;
+  z-index: 9000;
+  border: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.onboarding-card {
+  position: fixed;
+  z-index: 9002;
+  width: min(320px, calc(100vw - 32px));
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  padding: 16px 18px;
+}
+.onboarding-card.fade { transition: opacity 0.15s ease; }
+.onboarding-step-count { margin: 0 0 4px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.onboarding-card h3 { margin: 0 0 6px; font-size: 1.02rem; }
+.onboarding-card p:not(.onboarding-step-count) { margin: 0; font-size: 0.86rem; color: var(--text-muted); line-height: 1.45; }
+.onboarding-actions { display: flex; align-items: center; gap: 8px; margin-top: 14px; }

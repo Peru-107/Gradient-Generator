@@ -52,7 +52,7 @@
         <option value="tritanopia">👁 Tritanopia</option>
         <option value="achromatopsia">👁 Achromatopsia</option>
       </select>
-      <button id="btnEyedropperInfo" class="icon-btn" title="Space bar generates a new random design" aria-hidden="true">⌨</button>
+      <button id="btnEyedropperInfo" class="icon-btn" title="Keyboard shortcuts — customize any of them">⌨</button>
       <button id="btnOpenCommandPalette" class="icon-btn" title="Command palette (Ctrl/⌘ K) — also opens Projects">⌘</button>
       <button id="btnOpenPro" class="icon-btn pro-btn" title="Gradii Pro">⭐</button>
       <div class="dropdown theme-picker">
@@ -629,6 +629,37 @@
       <button id="btnSaveProject" class="btn btn-primary btn-sm">★ Save Current</button>
     </div>
     <div id="projectsList" class="projects-list"></div>
+  </div>
+</div>
+
+<div id="shortcutsOverlay" class="command-overlay" hidden>
+  <div class="command-box projects-box" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="projects-header">
+      <strong>Keyboard Shortcuts</strong>
+      <button id="btnCloseShortcuts" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <p class="hint" style="padding:0 16px;">Click Change, then press the new key combo. Esc cancels.</p>
+    <div id="shortcutsList" class="shortcuts-list"></div>
+    <div class="projects-save-row">
+      <button id="btnResetShortcuts" class="btn btn-sm">Reset all to default</button>
+    </div>
+  </div>
+</div>
+
+<div id="onboardingMaskTop" class="onboarding-mask" hidden></div>
+<div id="onboardingMaskBottom" class="onboarding-mask" hidden></div>
+<div id="onboardingMaskLeft" class="onboarding-mask" hidden></div>
+<div id="onboardingMaskRight" class="onboarding-mask" hidden></div>
+<div id="onboardingRing" class="onboarding-ring" hidden></div>
+<div id="onboardingCard" class="onboarding-card" hidden role="dialog" aria-label="Welcome tour">
+  <p class="onboarding-step-count" id="onboardingStepCount"></p>
+  <h3 id="onboardingTitle"></h3>
+  <p id="onboardingText"></p>
+  <div class="onboarding-actions">
+    <button id="btnOnboardingSkip" class="btn btn-sm">Skip tour</button>
+    <span style="flex:1"></span>
+    <button id="btnOnboardingBack" class="btn btn-sm">Back</button>
+    <button id="btnOnboardingNext" class="btn btn-primary btn-sm">Next</button>
   </div>
 </div>
 <canvas id="exportCanvas" style="display:none"></canvas>
