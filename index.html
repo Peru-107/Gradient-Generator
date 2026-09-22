@@ -74,9 +74,7 @@
 
         <div class="preview-col">
           <div class="preview-frame">
-            <div id="gradientPreview" class="gradient-preview">
-              <span class="contrast-overlay" id="gradientContrastOverlay" hidden></span>
-            </div>
+            <div id="gradientPreview" class="gradient-preview"></div>
             <button class="fullscreen-btn" id="btnFullscreenGradient" title="Full screen preview" aria-label="Full screen preview">⤢</button>
           </div>
 
@@ -111,23 +109,11 @@
         </div>
 
         <div class="controls-col">
-          <div class="control-card contrast-card">
-            <label class="control-label">Text contrast checker</label>
-            <div class="contrast-row">
-              <input type="text" id="gradientContrastText" class="text-input" placeholder="Sample text..." maxlength="60">
-              <input type="color" id="gradientContrastColor" class="contrast-color-input" value="#ffffff" title="Text color">
-            </div>
-            <div class="contrast-result" id="gradientContrastResult" hidden>
-              <span class="contrast-ratio" id="gradientContrastRatio">—</span>
-              <span class="contrast-badge" id="gradientContrastBadge">—</span>
-              <button class="btn btn-sm" id="gradientContrastFix">Auto-fix</button>
-            </div>
-          </div>
-
           <div class="control-card">
-            <label class="control-label control-label-row"><span>Smooth interpolation (OKLCH)</span>
+            <label class="control-label control-label-row"><span>Smoother color blend</span>
               <label class="oklch-switch"><input type="checkbox" id="gradientOklchToggle"><span></span></label>
             </label>
+            <p class="hint">Avoids the muddy grey that plain gradients can pass through between two bright colors.</p>
           </div>
 
           <div class="control-card">
@@ -198,7 +184,7 @@
               <option value="triadic">Triadic</option>
               <option value="tetradic">Tetradic</option>
               <option value="shades">Shades</option>
-              <option value="cohesiveOklch">Cohesive (OKLCH, honors all locks)</option>
+              <option value="cohesiveOklch">Cohesive (smooth blend, honors all locks)</option>
             </select>
           </div>
 
@@ -251,9 +237,7 @@
       <div class="studio mesh-studio">
         <div class="preview-col">
           <div class="preview-frame">
-            <div id="meshPreview" class="gradient-preview mesh-preview">
-              <span class="contrast-overlay" id="meshContrastOverlay" hidden></span>
-            </div>
+            <div id="meshPreview" class="gradient-preview mesh-preview"></div>
             <button class="fullscreen-btn" id="btnFullscreenMesh" title="Full screen preview" aria-label="Full screen preview">⤢</button>
           </div>
           <div class="export-block">
@@ -276,18 +260,6 @@
         </div>
 
         <div class="controls-col">
-          <div class="control-card contrast-card">
-            <label class="control-label">Text contrast checker</label>
-            <div class="contrast-row">
-              <input type="text" id="meshContrastText" class="text-input" placeholder="Sample text..." maxlength="60">
-              <input type="color" id="meshContrastColor" class="contrast-color-input" value="#ffffff" title="Text color">
-            </div>
-            <div class="contrast-result" id="meshContrastResult" hidden>
-              <span class="contrast-ratio" id="meshContrastRatio">—</span>
-              <span class="contrast-badge" id="meshContrastBadge">—</span>
-              <button class="btn btn-sm" id="meshContrastFix">Auto-fix</button>
-            </div>
-          </div>
 
           <div class="control-card">
             <div class="control-label-row">

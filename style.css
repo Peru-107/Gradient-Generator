@@ -114,8 +114,7 @@
    glance without touching any layout — cards keep their normal box model,
    this only changes how they're painted. */
 [data-theme="bento"] .control-card,
-[data-theme="bento"] .preview-frame,
-[data-theme="bento"] .contrast-card {
+[data-theme="bento"] .preview-frame {
   border: 2px solid var(--text);
   box-shadow: 4px 4px 0 0 var(--accent);
 }
@@ -132,8 +131,7 @@
    (which alone didn't read as different next to Light once the shared
    .control-card shadow/border/radius were still drawing a card outline). */
 [data-theme="editorial"] .control-card,
-[data-theme="editorial"] .preview-frame,
-[data-theme="editorial"] .contrast-card {
+[data-theme="editorial"] .preview-frame {
   border: none;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
@@ -150,11 +148,11 @@
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 /* Several components toggle visibility with the native `hidden` attribute
-   and then set their own `display` in a class rule (e.g. `.contrast-result
-   { display: flex }`) for when they're shown. At equal specificity a class
-   selector beats the browser's own [hidden] rule, so without this override
-   those elements stay visible even while hidden is set. This wins over any
-   single-class display rule unconditionally. */
+   and then set their own `display` in a class rule (e.g. `display: flex`)
+   for when they're shown. At equal specificity a class selector beats the
+   browser's own [hidden] rule, so without this override those elements
+   stay visible even while hidden is set. This wins over any single-class
+   display rule unconditionally. */
 [hidden] { display: none !important; }
 
 html, body {
@@ -1194,23 +1192,6 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   .preview-actions .btn, .preview-actions .dropdown,
   .palette-toolbar > .btn, .palette-toolbar > .dropdown { flex: 1 1 100%; }
 }
-
-/* ---------------- contrast checker ---------------- */
-.contrast-overlay {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  text-align: center; padding: 16px; font-size: clamp(1rem, 3.5vw, 1.6rem); font-weight: 700;
-  pointer-events: none; word-break: break-word; text-wrap: balance;
-}
-.contrast-row { display: flex; gap: 10px; align-items: center; }
-.contrast-row .text-input { flex: 1; }
-.contrast-color-input { width: 40px; height: 40px; padding: 2px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-soft); cursor: pointer; flex-shrink: 0; }
-.contrast-result { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-.contrast-ratio { font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem; }
-.contrast-badge { font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 4px 10px; border-radius: 999px; }
-.contrast-badge.pass { background: #dcf7e3; color: #0f7a3d; }
-.contrast-badge.fail { background: #fddede; color: #b91c1c; }
-[data-theme="dark"] .contrast-badge.pass, [data-theme="aurora"] .contrast-badge.pass { background: #103621; color: #5fd88f; }
-[data-theme="dark"] .contrast-badge.fail, [data-theme="aurora"] .contrast-badge.fail { background: #3a1414; color: #ff8484; }
 
 /* ---------------- small toggle switch (OKLCH / Brand Kit) ---------------- */
 .oklch-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }

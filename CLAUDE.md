@@ -104,9 +104,9 @@ normal text needs **4.5:1**, large text (≥18pt / ≥14pt bold) needs
 backgrounds, only near-black or near-white text actually clears 4.5:1
 — that's correct math, not a bug to "fix" by loosening the target.
 
-**What looked like a bug but wasn't (quite):** the contrast auto-fix
-appeared to only ever produce white or black regardless of the text
-color you started from. The contrast math was right; the color
+**What looked like a bug but wasn't (quite):** the Text Contrast Checker's
+auto-fix appeared to only ever produce white or black regardless of the
+text color you started from. The contrast math was right; the color
 *rendering* wasn't. Converting an out-of-gamut OKLCH color to sRGB by
 clamping each RGB channel independently — what `oklchToHex` alone does
 — distorts the hue unpredictably as lightness drops, because different
@@ -118,13 +118,18 @@ browsers to gamut-map OKLCH by reducing chroma (preserving lightness
 and hue), but Chrome and Safari's native `oklch()` still use the faster,
 lossier clip-each-channel method as of this writing ([Evil Martians,
 OKLCH in CSS](https://evilmartians.com/chronicles/oklch-in-css-why-quit-rgb-hsl#gamut-correction)).
-**The fix, and the rule going forward:** never hex-convert an OKLCH
-color that might be out of gamut without gamut-mapping it first.
-`oklchToHexInGamut(L, C, H)` in `app.js` binary-searches chroma down
-(never touching L or H) until the color is representable, then
-converts — use it (not bare `oklchToHex`) anywhere a computed L/C/H
-triple might be out of gamut, which is anywhere L is pushed toward the
-extremes (auto-fix, dark/light theme variants of a user color, etc.).
+The fix at the time was a binary-search-chroma helper (`oklchToHexInGamut`)
+that never touched L or H — but the Text Contrast Checker feature itself
+was later removed as unwanted UI complexity, and that helper went with
+it since it had no other caller. **The rule going forward, if OKLCH
+gamut mapping is needed again:** never hex-convert an OKLCH color that
+might be out of gamut by clamping each RGB channel independently —
+reduce chroma only (never L or H) until it's in-gamut, then convert.
+This matters anywhere a computed L/C/H triple might be pushed toward
+the lightness extremes (dark/light theme variants of a user color,
+any future contrast/accessibility tooling, etc.) — re-implement the
+binary-search-chroma approach rather than reaching for plain
+`oklchToHex` on an unchecked triple.
 
 ### Motion and `prefers-reduced-motion`
 

@@ -47,42 +47,6 @@ function oklchToHex(L, C, H) {
   const hr = H * Math.PI / 180;
   return oklabToHex(L, C * Math.cos(hr), C * Math.sin(hr));
 }
-/* Whether (L, C, H) maps to a color inside the sRGB gamut, i.e. the
-   linear-light RGB it converts to before clamping is within [0, 1] on
-   every channel — checked directly rather than by converting to hex
-   first, since the hex conversion is exactly the clamping we're trying
-   to detect. */
-function oklchInGamut(L, C, H) {
-  const hr = H * Math.PI / 180;
-  const a = C * Math.cos(hr), b = C * Math.sin(hr);
-  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
-  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
-  const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
-  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
-  const lr = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
-  const lg = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
-  const lb = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
-  const eps = 1e-4;
-  return lr >= -eps && lr <= 1 + eps && lg >= -eps && lg <= 1 + eps && lb >= -eps && lb <= 1 + eps;
-}
-/* Same color, but gamut-mapped by reducing chroma (never lightness or
-   hue) until it's displayable in sRGB. Plain hex conversion instead
-   clamps each RGB channel independently after the fact, which silently
-   drags the hue toward whichever channel clipped hardest — a saturated
-   yellow walked dark enough to pass a contrast check comes out clipped
-   to near-black with a random green/red tinge instead of a rich dark
-   gold, because R and G clip at different points and B never moves.
-   Preserving hue/lightness and only giving up chroma keeps the result
-   recognizably "the same color, adjusted" instead of mystery mud. */
-function oklchToHexInGamut(L, C, H) {
-  if (C <= 0 || oklchInGamut(L, C, H)) return oklchToHex(L, C, H);
-  let lo = 0, hi = C;
-  for (let i = 0; i < 18; i++) {
-    const mid = (lo + hi) / 2;
-    if (oklchInGamut(L, mid, H)) lo = mid; else hi = mid;
-  }
-  return oklchToHex(L, lo, H);
-}
 function mixOklch(hexA, hexB, t) {
   const a = hexToOklch(hexA), b = hexToOklch(hexB);
   let dh = b.H - a.H;
@@ -92,54 +56,6 @@ function mixOklch(hexA, hexB, t) {
   const L = a.L + (b.L - a.L) * t;
   const C = a.C + (b.C - a.C) * t;
   return oklchToHex(L, C, H);
-}
-
-/* ---------------- WCAG contrast ---------------- */
-function relLuminance(hex) {
-  const { r, g, b } = hexToRgb(hex);
-  const lin = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
-function contrastRatio(hexA, hexB) {
-  const L1 = relLuminance(hexA), L2 = relLuminance(hexB);
-  const lighter = Math.max(L1, L2), darker = Math.min(L1, L2);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-/* Nudges a text color's OKLCH lightness toward whichever of black/white
-   gets there with the smallest change, gamut-mapping each candidate
-   (chroma only, never hue/lightness — see oklchToHexInGamut) so a
-   saturated color walked toward the dark or light end comes out as a
-   rich dark/pale version of itself instead of sRGB-clamping into an
-   arbitrary near-black/near-white with a distorted hue.
-   For many colorful mid-lightness backgrounds, near-black or near-white
-   really is the only way to clear 4.5:1 — that's correct WCAG math, not
-   a bug — but the result should still read as "your color, adjusted,"
-   not an unrelated shade. */
-function autoFixTextColor(textHex, bgHex, targetRatio) {
-  targetRatio = targetRatio || 4.5;
-  if (contrastRatio(textHex, bgHex) >= targetRatio) return textHex;
-  const { L, C, H } = hexToOklch(textHex);
-  let winner = null, winnerDist = Infinity;
-  let fallback = null, fallbackRatio = 0;
-  for (const dir of [1, -1]) {
-    let l = L;
-    for (let i = 0; i < 80; i++) {
-      l = clamp(l + dir * 0.0125, 0, 1);
-      const candidate = oklchToHexInGamut(l, C, H);
-      const ratio = contrastRatio(candidate, bgHex);
-      if (ratio > fallbackRatio) { fallbackRatio = ratio; fallback = candidate; }
-      if (ratio >= targetRatio) {
-        const dist = Math.abs(l - L);
-        if (dist < winnerDist) { winnerDist = dist; winner = candidate; }
-        break;
-      }
-      if (l <= 0 || l >= 1) break;
-    }
-  }
-  if (winner) return winner;
-  const blackRatio = contrastRatio('#000000', bgHex), whiteRatio = contrastRatio('#ffffff', bgHex);
-  if (Math.max(blackRatio, whiteRatio) > fallbackRatio) return blackRatio > whiteRatio ? '#000000' : '#ffffff';
-  return fallback || textHex;
 }
 
 /* Exports sized to a generic preset rarely match the requesting device's
@@ -675,7 +591,6 @@ function renderGradientPreview() {
   const css = buildGradientCss(gradientState);
   gradientPreview.style.background = css;
   cssOutput.textContent = `background: ${css};`;
-  updateGradientContrast();
 }
 
 function renderControlVisibility() {
@@ -1438,7 +1353,6 @@ function renderMeshPreview() {
     `background-color: ${meshState.baseColor};\n` +
     `background-image:\n${cssLayers};\n` +
     `background-blend-mode: ${meshState.blendMode};`;
-  updateMeshContrast();
 }
 
 function renderMeshBlobsList() {
@@ -2490,68 +2404,6 @@ document.getElementById('btnRedeemLicense').addEventListener('click', async () =
   }
 });
 refreshProUI();
-
-/* ==========================================================================
-   Text contrast checker (Gradient + Mesh)
-   ========================================================================== */
-
-function sampleGradientCenterColor() {
-  const w = 80, h = 80;
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d');
-  drawGradientToCanvas(ctx, w, h, gradientState);
-  const d = ctx.getImageData(w >> 1, h >> 1, 1, 1).data;
-  return rgbToHex(d[0], d[1], d[2]);
-}
-function sampleMeshCenterColor() {
-  const w = 80, h = 80;
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d');
-  drawMeshToCanvas(ctx, w, h, meshState);
-  const d = ctx.getImageData(w >> 1, h >> 1, 1, 1).data;
-  return rgbToHex(d[0], d[1], d[2]);
-}
-
-function setupContrastChecker(prefix, sampleFn) {
-  const textInput = document.getElementById(prefix + 'ContrastText');
-  const colorInput = document.getElementById(prefix + 'ContrastColor');
-  const overlay = document.getElementById(prefix + 'ContrastOverlay');
-  const result = document.getElementById(prefix + 'ContrastResult');
-  const ratioEl = document.getElementById(prefix + 'ContrastRatio');
-  const badgeEl = document.getElementById(prefix + 'ContrastBadge');
-  const fixBtn = document.getElementById(prefix + 'ContrastFix');
-
-  function update() {
-    const text = textInput.value;
-    if (!text) { overlay.hidden = true; result.hidden = true; return; }
-    overlay.hidden = false;
-    overlay.textContent = text;
-    overlay.style.color = colorInput.value;
-    const bg = sampleFn();
-    const ratio = contrastRatio(colorInput.value, bg);
-    ratioEl.textContent = ratio.toFixed(2) + ':1';
-    const passAA = ratio >= 4.5, passAAA = ratio >= 7;
-    badgeEl.textContent = passAAA ? 'AAA pass' : passAA ? 'AA pass' : 'Fail';
-    badgeEl.className = 'contrast-badge ' + (passAA ? 'pass' : 'fail');
-    result.hidden = false;
-  }
-
-  textInput.addEventListener('input', update);
-  colorInput.addEventListener('input', update);
-  fixBtn.addEventListener('click', () => {
-    const bg = sampleFn();
-    colorInput.value = autoFixTextColor(colorInput.value, bg, 4.5);
-    update();
-    showToast('Text color adjusted for AA contrast');
-  });
-
-  return update;
-}
-
-const updateGradientContrast = setupContrastChecker('gradient', sampleGradientCenterColor);
-const updateMeshContrast = setupContrastChecker('mesh', sampleMeshCenterColor);
 
 /* ==========================================================================
    OKLCH smooth interpolation toggle
