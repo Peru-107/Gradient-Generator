@@ -501,6 +501,35 @@
           </div>
 
           <div class="control-card">
+            <label class="control-label">Time &amp; motion</label>
+
+            <label class="control-label control-label-row"><span>Time-of-day tint</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperTimeOfDayToggle"><span></span></label>
+            </label>
+            <p class="hint">Colors drift warmer near dawn/dusk and cooler through the day, based on the viewer's own clock — live in the preview, and in the Live HTML File wherever it's played.</p>
+
+            <label class="control-label control-label-row"><span>Tilt parallax (Live HTML File)</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperParallaxToggle"><span></span></label>
+            </label>
+            <p class="hint">Uses the phone's tilt sensor to shift the scene slightly for a sense of depth. Applies to the exported Live HTML File on a real device — there's no tilt sensor to preview in-browser.</p>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label">Chapters</label>
+            <p class="hint" style="margin-top:-4px;">Save a few looks for different times of day. With Auto-apply on, opening Gradii switches to whichever chapter matches right now — this checks when the app opens, not in the background while it's closed (true background rotation needs a native OS feature this build doesn't include yet).</p>
+            <div id="wallpaperChaptersList" class="chapters-list"></div>
+            <div class="preview-actions" style="margin-top:8px;">
+              <input type="text" id="chapterNameInput" class="text-input" placeholder="Name (e.g. Morning)" style="flex:1;">
+              <input type="number" id="chapterHourInput" class="text-input" placeholder="Hr" min="0" max="23" style="width:56px;" title="Start hour, 24h clock">
+              <button id="btnAddChapter" class="btn btn-sm">+ Add from Current</button>
+            </div>
+            <label class="control-label control-label-row" style="margin-top:10px;"><span>Auto-apply on open</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperChaptersAutoToggle"><span></span></label>
+            </label>
+            <button id="btnCheckChapterNow" class="btn btn-sm" style="margin-top:8px;">🕐 Check Now</button>
+          </div>
+
+          <div class="control-card">
             <label class="control-label">Recipe</label>
             <p class="hint" style="margin-top:-4px;">Save the pattern, colors, and effects as a small file, or load one back in — handy for reusing a look across sessions.</p>
             <div class="preview-actions">

@@ -2439,13 +2439,75 @@ function wpApplyEffects(ctx, w, h, effects) {
   }
 }
 
-function wpDrawFrame(pattern, ctx, w, h, t, colors, speed, effects) {
+/* Self-contained hex<->HSL pair, deliberately duplicating hexToHsl/
+   hslToHex from the main color-utilities section rather than reusing
+   them — every wp*-prefixed function here is exactly the set that gets
+   serialized via .toString() into the standalone Live HTML export (see
+   exportWallpaperHtml()), so it can't depend on anything outside that
+   set without silently breaking in the exported file. */
+function wpHexToHsl(hex) {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const num = parseInt(full, 16) || 0;
+  const r = ((num >> 16) & 255) / 255, g = ((num >> 8) & 255) / 255, b = (num & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let hh = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) hh = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) hh = (b - r) / d + 2;
+    else hh = (r - g) / d + 4;
+    hh *= 60;
+  }
+  return { h: hh, s: s * 100, l: l * 100 };
+}
+function wpHslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const toHex = x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0');
+  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
+}
+/* A believable day-cycle warmth curve from local clock time alone (no
+   geolocation/real sunrise-sunset lookup — that's more precision than
+   a wallpaper tint needs): warm peaks near dawn and dusk, cool through
+   midday, mild through the evening, coolest in the dead of night. */
+function wpGetTimeOfDayTemperature() {
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  if (hour >= 5 && hour < 8) return 30 + (hour - 5) * 3;
+  if (hour >= 8 && hour < 11) return 20 - (hour - 8) * 10;
+  if (hour >= 11 && hour < 15) return -15;
+  if (hour >= 15 && hour < 18) return -15 + (hour - 15) * 15;
+  if (hour >= 18 && hour < 21) return 30 + (hour - 18) * 3;
+  if (hour >= 21 || hour < 2) return 10;
+  return -25;
+}
+function wpApplyTimeOfDayTint(colors) {
+  const temp = wpGetTimeOfDayTemperature();
+  const targetHue = temp > 0 ? 35 : 215;
+  const strength = Math.min(1, Math.abs(temp) / 40) * 0.45;
+  return colors.map(c => {
+    const { h, s, l } = wpHexToHsl(c);
+    let dh = targetHue - h;
+    if (dh > 180) dh -= 360;
+    if (dh < -180) dh += 360;
+    const newHue = (h + dh * strength + 360) % 360;
+    return wpHslToHex(newHue, s, l);
+  });
+}
+
+function wpDrawFrame(pattern, ctx, w, h, t, colors, speed, effects, timeOfDayTint) {
+  const renderColors = timeOfDayTint ? wpApplyTimeOfDayTint(colors) : colors;
   ctx.save();
-  if (pattern === 'auroraFlow') wpDrawAuroraFlow(ctx, w, h, t, colors, speed);
-  else if (pattern === 'radialPulse') wpDrawRadialPulse(ctx, w, h, t, colors, speed);
-  else if (pattern === 'conicSpin') wpDrawConicSpin(ctx, w, h, t, colors, speed);
-  else if (pattern === 'waveBands') wpDrawWaveBands(ctx, w, h, t, colors, speed);
-  else wpDrawFlowingMesh(ctx, w, h, t, colors, speed);
+  if (pattern === 'auroraFlow') wpDrawAuroraFlow(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'radialPulse') wpDrawRadialPulse(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'conicSpin') wpDrawConicSpin(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'waveBands') wpDrawWaveBands(ctx, w, h, t, renderColors, speed);
+  else wpDrawFlowingMesh(ctx, w, h, t, renderColors, speed);
   wpApplyEffects(ctx, w, h, effects);
   ctx.restore();
 }
@@ -2507,6 +2569,8 @@ let wallpaperState = {
   loopPerfect: false,
   loopSeconds: 6,
   seed: null,
+  timeOfDayTint: false,
+  parallax: false,
 };
 
 const wallpaperCanvas = document.getElementById('wallpaperCanvas');
@@ -2540,7 +2604,7 @@ function drawWallpaperFrame(t) {
      t=0 is bit-for-bit the same as at t=loopSeconds — true regardless of
      how many independent frequencies a pattern mixes internally. */
   const useT = wallpaperState.loopPerfect ? (t % wallpaperState.loopSeconds) : t;
-  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, useT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, useT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
 }
 
 function wallpaperTick(ts) {
@@ -2772,6 +2836,108 @@ wallpaperLoopLengthSlider.addEventListener('input', () => {
   wallpaperLoopLengthValue.textContent = `${wallpaperState.loopSeconds}s`;
 });
 
+document.getElementById('wallpaperTimeOfDayToggle').addEventListener('change', (e) => {
+  wallpaperState.timeOfDayTint = e.target.checked;
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+});
+document.getElementById('wallpaperParallaxToggle').addEventListener('change', (e) => {
+  wallpaperState.parallax = e.target.checked;
+});
+
+/* Wallpaper "Chapters": named looks tied to a time-of-day window,
+   applied when the app is opened/foregrounded (or on demand via Check
+   Now) — not a true background rotation. Real background switching
+   while the app is closed needs a native scheduled service (e.g.
+   Android WorkManager driving the existing WallpaperSetter plugin),
+   which is a real native-Android build+device-verification undertaking
+   on its own; this in-app version ships what's honestly verifiable
+   without a physical device to test background service reliability on. */
+function loadWallpaperChapters() {
+  try { return JSON.parse(localStorage.getItem('gradii_wallpaper_chapters') || '[]'); } catch (e) { return []; }
+}
+function saveWallpaperChaptersList(list) {
+  try { localStorage.setItem('gradii_wallpaper_chapters', JSON.stringify(list)); } catch (e) { /* ignore */ }
+}
+function findActiveChapter(chapters) {
+  if (!chapters.length) return null;
+  const hour = new Date().getHours();
+  const sorted = [...chapters].sort((a, b) => a.startHour - b.startHour);
+  let active = sorted[sorted.length - 1];
+  for (const ch of sorted) {
+    if (hour >= ch.startHour) active = ch;
+  }
+  return active;
+}
+function applyWallpaperChapter(chapter) {
+  wallpaperState.pattern = chapter.pattern;
+  wallpaperState.colors = [...chapter.colors];
+  wallpaperState.speed = chapter.speed;
+  wallpaperState.effects = JSON.parse(JSON.stringify(chapter.effects));
+  wallpaperPatternSelect.value = wallpaperState.pattern;
+  wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
+  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+  renderWallpaperColorsList();
+  syncWallpaperEffectsUI();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+}
+function renderWallpaperChaptersList() {
+  const list = loadWallpaperChapters();
+  const container = document.getElementById('wallpaperChaptersList');
+  container.innerHTML = '';
+  list.sort((a, b) => a.startHour - b.startHour).forEach((ch, i) => {
+    const el = document.createElement('div');
+    el.className = 'chapter-item';
+    el.innerHTML = `
+      <span class="chapter-item-swatch" style="background: linear-gradient(135deg, ${ch.colors.join(', ')})"></span>
+      <div class="chapter-item-info">
+        <div class="chapter-item-name">${ch.name}</div>
+        <div class="chapter-item-time">from ${String(ch.startHour).padStart(2, '0')}:00</div>
+      </div>
+      <button class="chapter-item-remove" title="Delete">✕</button>
+    `;
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.chapter-item-remove')) return;
+      applyWallpaperChapter(ch);
+      showToast(`Applied "${ch.name}"`);
+    });
+    el.querySelector('.chapter-item-remove').addEventListener('click', () => {
+      const l = loadWallpaperChapters().filter(c => c.name !== ch.name || c.startHour !== ch.startHour);
+      saveWallpaperChaptersList(l);
+      renderWallpaperChaptersList();
+    });
+    container.appendChild(el);
+  });
+}
+document.getElementById('btnAddChapter').addEventListener('click', () => {
+  const name = document.getElementById('chapterNameInput').value.trim();
+  const hour = Number(document.getElementById('chapterHourInput').value);
+  if (!name) { showToast('Give this chapter a name first'); return; }
+  if (!(hour >= 0 && hour <= 23)) { showToast('Start hour must be 0-23'); return; }
+  const list = loadWallpaperChapters();
+  list.push({
+    name, startHour: hour,
+    pattern: wallpaperState.pattern,
+    colors: [...wallpaperState.colors],
+    speed: wallpaperState.speed,
+    effects: JSON.parse(JSON.stringify(wallpaperState.effects)),
+  });
+  saveWallpaperChaptersList(list);
+  renderWallpaperChaptersList();
+  document.getElementById('chapterNameInput').value = '';
+  document.getElementById('chapterHourInput').value = '';
+  showToast(`Chapter "${name}" saved from the current wallpaper`);
+});
+document.getElementById('btnCheckChapterNow').addEventListener('click', () => {
+  const active = findActiveChapter(loadWallpaperChapters());
+  if (!active) { showToast('No chapters saved yet'); return; }
+  applyWallpaperChapter(active);
+  showToast(`It's ${new Date().getHours()}:00 — applied "${active.name}"`);
+});
+const wallpaperChaptersAutoToggle = document.getElementById('wallpaperChaptersAutoToggle');
+wallpaperChaptersAutoToggle.addEventListener('change', (e) => {
+  try { localStorage.setItem('gradii_wallpaper_chapters_auto', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
+});
+
 document.getElementById('btnExportWallpaperRecipe').addEventListener('click', () => {
   const recipe = {
     kind: 'gradii-wallpaper-recipe',
@@ -2874,7 +3040,7 @@ document.getElementById('btnBatchExportWallpaper').addEventListener('click', asy
   suppressRecentGenerated = true;
   for (let i = 0; i < count; i++) {
     randomizeWallpaperColors();
-    wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+    wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
     if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
     drawWatermark(ctx, w, h);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
@@ -2908,7 +3074,7 @@ document.getElementById('btnMultiMonitorExport').addEventListener('click', () =>
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
   if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
   drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `wallpaper-${monitors}monitor-${w}x${h}.png`);
@@ -2952,7 +3118,7 @@ document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () 
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
   if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
   drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `wallpaper-${w}x${h}.png`);
@@ -2967,7 +3133,7 @@ document.getElementById('btnCopyWallpaperImage').addEventListener('click', () =>
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
   if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
   drawWatermark(ctx, w, h);
   copyCanvasToClipboard(canvas);
@@ -2987,7 +3153,7 @@ btnSetAsWallpaper.addEventListener('click', async () => {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
   if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
   drawWatermark(ctx, w, h);
   canvas.toBlob(async (blob) => {
@@ -3075,7 +3241,11 @@ let audioLevel = 0;
 `;
 
 function exportWallpaperHtml() {
-  const functionsSrc = [wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands, wpMakeNoiseCanvas, wpApplyEffects, wpDrawFrame]
+  const functionsSrc = [
+    wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands,
+    wpMakeNoiseCanvas, wpApplyEffects, wpHexToHsl, wpHslToHex, wpGetTimeOfDayTemperature, wpApplyTimeOfDayTint,
+    wpDrawFrame,
+  ]
     .map(fn => fn.toString())
     .join('\n\n');
   const stateJson = JSON.stringify({
@@ -3085,6 +3255,8 @@ function exportWallpaperHtml() {
     effects: wallpaperState.effects,
     loopPerfect: wallpaperState.loopPerfect,
     loopSeconds: wallpaperState.loopSeconds,
+    timeOfDayTint: wallpaperState.timeOfDayTint,
+    parallax: wallpaperState.parallax,
   });
   const audioReactive = document.getElementById('wallpaperAudioReactive').checked;
   const html = `<!doctype html>
@@ -3119,10 +3291,47 @@ function loop(ts) {
   let t = (ts - start) / 1000;
   if (wallpaperData.loopPerfect && audioLevel === 0) t = t % wallpaperData.loopSeconds;
   const speed = wallpaperData.speed * (1 + audioLevel * 2.2);
-  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed, wallpaperData.effects);
+  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed, wallpaperData.effects, wallpaperData.timeOfDayTint);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+/* Tilt parallax: the canvas itself is rendered ~12% larger than the
+   viewport on each axis and CSS-shifted within that slack as the phone
+   tilts, so tilting reveals a bit more of one edge and hides a bit of
+   the other — a real depth illusion, with zero changes to how the
+   pattern itself is drawn. Falls back to doing nothing wherever
+   DeviceOrientationEvent isn't available or permission is denied; iOS
+   13+ requires that permission be requested from a user gesture, so
+   this waits for the first tap/click before asking. */
+if (wallpaperData.parallax && window.DeviceOrientationEvent) {
+  canvas.style.width = '112vw';
+  canvas.style.height = '112vh';
+  canvas.style.position = 'fixed';
+  canvas.style.left = '-6vw';
+  canvas.style.top = '-6vh';
+  canvas.style.transition = 'transform 0.2s ease-out';
+  function applyTilt(gamma, beta) {
+    const x = Math.max(-1, Math.min(1, gamma / 30)) * 5;
+    const y = Math.max(-1, Math.min(1, (beta - 45) / 30)) * 5;
+    canvas.style.transform = 'translate(' + x + 'vw, ' + y + 'vh)';
+  }
+  function startOrientation() {
+    window.addEventListener('deviceorientation', function (e) {
+      if (e.gamma !== null && e.beta !== null) applyTilt(e.gamma, e.beta);
+    });
+  }
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    document.addEventListener('click', function once() {
+      DeviceOrientationEvent.requestPermission().then(function (state) {
+        if (state === 'granted') startOrientation();
+      }).catch(function () {});
+      document.removeEventListener('click', once);
+    }, { once: true });
+  } else {
+    startOrientation();
+  }
+}
 </script>
 </body>
 </html>
@@ -4224,6 +4433,14 @@ function init() {
 
   renderWallpaperColorsList();
   renderWallpaperPresets();
+  renderWallpaperChaptersList();
+  let chaptersAutoOn = false;
+  try { chaptersAutoOn = localStorage.getItem('gradii_wallpaper_chapters_auto') === '1'; } catch (e) { /* ignore */ }
+  wallpaperChaptersAutoToggle.checked = chaptersAutoOn;
+  if (chaptersAutoOn) {
+    const active = findActiveChapter(loadWallpaperChapters());
+    if (active) applyWallpaperChapter(active);
+  }
 
   loadStateFromUrl();
 
