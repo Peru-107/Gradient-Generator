@@ -1353,6 +1353,72 @@ function renderMeshPreview() {
     `background-color: ${meshState.baseColor};\n` +
     `background-image:\n${cssLayers};\n` +
     `background-blend-mode: ${meshState.blendMode};`;
+
+  syncMeshDragHandles();
+}
+
+/* Cheap position/color refresh for the existing drag handles — called on
+   every preview render (including mid-drag) without touching the DOM
+   nodes themselves, so it never interrupts an in-progress drag's pointer
+   capture the way rebuilding the handles would. */
+function syncMeshDragHandles() {
+  const handles = meshPreview.querySelectorAll('.mesh-drag-handle');
+  meshState.points.forEach((p, i) => {
+    const h = handles[i];
+    if (!h) return;
+    h.style.left = `${p.x}%`;
+    h.style.top = `${p.y}%`;
+    h.style.background = p.color;
+  });
+}
+
+/* Rebuilds the drag handles to match meshState.points 1:1 — only called
+   on structural changes (add/remove/randomize/preset/init), never on
+   every render, since recreating the nodes mid-drag would drop the
+   active pointer capture and abort the drag. */
+function renderMeshDragHandles() {
+  meshPreview.querySelectorAll('.mesh-drag-handle').forEach(el => el.remove());
+  meshState.points.forEach((p, i) => {
+    const handle = document.createElement('div');
+    handle.className = 'mesh-drag-handle';
+    handle.style.left = `${p.x}%`;
+    handle.style.top = `${p.y}%`;
+    handle.style.background = p.color;
+    handle.title = `Blob ${i + 1} — drag to move`;
+    handle.addEventListener('pointerdown', (e) => startMeshBlobDrag(e, i, handle));
+    meshPreview.appendChild(handle);
+  });
+}
+
+function startMeshBlobDrag(e, index, handle) {
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId);
+  handle.classList.add('dragging');
+  const rect = meshPreview.getBoundingClientRect();
+
+  function onMove(ev) {
+    const x = clamp(((ev.clientX - rect.left) / rect.width) * 100, 0, 100);
+    const y = clamp(((ev.clientY - rect.top) / rect.height) * 100, 0, 100);
+    meshState.points[index].x = Math.round(x);
+    meshState.points[index].y = Math.round(y);
+    renderMeshPreview();
+    const row = meshBlobsList.children[index];
+    if (row) {
+      row.querySelector('.mesh-blob-x').value = meshState.points[index].x;
+      row.querySelector('.mesh-blob-x-value').textContent = `${meshState.points[index].x}%`;
+      row.querySelector('.mesh-blob-y').value = meshState.points[index].y;
+      row.querySelector('.mesh-blob-y-value').textContent = `${meshState.points[index].y}%`;
+    }
+  }
+  function onUp() {
+    handle.classList.remove('dragging');
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+    handle.removeEventListener('pointercancel', onUp);
+  }
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
+  handle.addEventListener('pointercancel', onUp);
 }
 
 function renderMeshBlobsList() {
@@ -1408,6 +1474,7 @@ function renderMeshBlobsList() {
     });
     meshBlobsList.appendChild(row);
   });
+  renderMeshDragHandles();
 }
 
 function renderMeshPresets() {
@@ -1728,15 +1795,52 @@ function wpDrawFrame(pattern, ctx, w, h, t, colors, speed, effects) {
   ctx.restore();
 }
 
+/* True-black/AMOLED export: crushes near-black shadow pixels to pure
+   #000 so an OLED screen can actually turn those pixels off, rather
+   than lighting them at some very-dark-but-nonzero value. Export-only
+   (PNG / Set as Wallpaper) — deliberately not part of wpDrawFrame or the
+   live/animated HTML export, since re-running a full getImageData pass
+   every frame at 60fps would be wasteful for something that only needs
+   to happen once, at the moment of export. */
+function wpApplyAmoledCrush(ctx, w, h, threshold) {
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] <= threshold && d[i + 1] <= threshold && d[i + 2] <= threshold) {
+      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+/* Style packs: each bundles a pattern + colors + the effects stack
+   (grain/vignette/glow/duotone) into one click, instead of leaving
+   "look" and "look distinctive" as two separate steps. effects is
+   always the full { grain, vignette, glow, duotone } shape so a click
+   fully replaces wallpaperState.effects rather than merging into it. */
 const WALLPAPER_PRESETS = [
-  { name: 'Nebula Drift', pattern: 'flowingMesh', speed: 1.0, colors: ['#05030f', '#6d5dfc', '#ff6b9d', '#22d3c5'] },
-  { name: 'Northern Lights', pattern: 'auroraFlow', speed: 0.8, colors: ['#020814', '#00f2fe', '#43cea2', '#7b2ff7'] },
-  { name: 'Heartbeat', pattern: 'radialPulse', speed: 1.4, colors: ['#0a0505', '#ff512f', '#f5af19'] },
-  { name: 'Color Wheel', pattern: 'conicSpin', speed: 0.6, colors: ['#6d5dfc', '#ff6b9d', '#ffd43b', '#22d3c5'] },
-  { name: 'Ocean Waves', pattern: 'waveBands', speed: 0.7, colors: ['#04263c', '#0077b6', '#00b4d8', '#90e0ef'] },
-  { name: 'Molten Core', pattern: 'radialPulse', speed: 1.8, colors: ['#0a0505', '#f12711', '#f5af19'] },
-  { name: 'Candy Drift', pattern: 'flowingMesh', speed: 0.9, colors: ['#1a0f1e', '#ff9a9e', '#a18cd1', '#fbc2eb'] },
-  { name: 'Citrus Spin', pattern: 'conicSpin', speed: 0.5, colors: ['#fffdf5', '#f7971e', '#ffd200', '#a8ff78'] },
+  { name: 'Nebula Drift', pattern: 'flowingMesh', speed: 1.0, colors: ['#05030f', '#6d5dfc', '#ff6b9d', '#22d3c5'],
+    effects: { grain: 0.15, vignette: 0.2, glow: 0.25, duotone: null } },
+  { name: 'Northern Lights', pattern: 'auroraFlow', speed: 0.8, colors: ['#020814', '#00f2fe', '#43cea2', '#7b2ff7'],
+    effects: { grain: 0.1, vignette: 0.15, glow: 0.4, duotone: null } },
+  { name: 'Heartbeat', pattern: 'radialPulse', speed: 1.4, colors: ['#0a0505', '#ff512f', '#f5af19'],
+    effects: { grain: 0.2, vignette: 0.3, glow: 0.2, duotone: null } },
+  { name: 'Color Wheel', pattern: 'conicSpin', speed: 0.6, colors: ['#6d5dfc', '#ff6b9d', '#ffd43b', '#22d3c5'],
+    effects: { grain: 0, vignette: 0, glow: 0.3, duotone: null } },
+  { name: 'Ocean Waves', pattern: 'waveBands', speed: 0.7, colors: ['#04263c', '#0077b6', '#00b4d8', '#90e0ef'],
+    effects: { grain: 0.1, vignette: 0.2, glow: 0.15, duotone: null } },
+  { name: 'Molten Core', pattern: 'radialPulse', speed: 1.8, colors: ['#0a0505', '#f12711', '#f5af19'],
+    effects: { grain: 0.25, vignette: 0.35, glow: 0.35, duotone: null } },
+  { name: 'Candy Drift', pattern: 'flowingMesh', speed: 0.9, colors: ['#1a0f1e', '#ff9a9e', '#a18cd1', '#fbc2eb'],
+    effects: { grain: 0, vignette: 0, glow: 0.2, duotone: null } },
+  { name: 'Citrus Spin', pattern: 'conicSpin', speed: 0.5, colors: ['#fffdf5', '#f7971e', '#ffd200', '#a8ff78'],
+    effects: { grain: 0, vignette: 0, glow: 0.15, duotone: null } },
+  { name: 'Film Noir', pattern: 'radialPulse', speed: 1.0, colors: ['#050505', '#b23a48', '#4a4e69'],
+    effects: { grain: 0.45, vignette: 0.55, glow: 0.1, duotone: { shadow: '#0a0508', highlight: '#e8c4a0' } } },
+  { name: 'Cyber Dusk', pattern: 'conicSpin', speed: 0.7, colors: ['#08021a', '#ff2e88', '#00e5ff', '#7b2ff7'],
+    effects: { grain: 0.2, vignette: 0.3, glow: 0.5, duotone: null } },
+  { name: 'Sepia Drift', pattern: 'flowingMesh', speed: 0.8, colors: ['#1a1006', '#c9944a', '#8a5a2b', '#e8c98f'],
+    effects: { grain: 0.35, vignette: 0.4, glow: 0.15, duotone: { shadow: '#160f08', highlight: '#f0d9a8' } } },
 ];
 
 let wallpaperState = {
@@ -1832,15 +1936,19 @@ function renderWallpaperPresets() {
     canvas.height = 96;
     canvas.title = preset.name;
     const ctx = canvas.getContext('2d');
-    wpDrawFrame(preset.pattern, ctx, 96, 96, 0.6, preset.colors, preset.speed);
+    wpDrawFrame(preset.pattern, ctx, 96, 96, 0.6, preset.colors, preset.speed, preset.effects);
     canvas.addEventListener('click', () => {
       wallpaperState.pattern = preset.pattern;
       wallpaperState.colors = [...preset.colors];
       wallpaperState.speed = preset.speed;
+      wallpaperState.effects = preset.effects
+        ? { grain: preset.effects.grain || 0, vignette: preset.effects.vignette || 0, glow: preset.effects.glow || 0, duotone: preset.effects.duotone ? { ...preset.effects.duotone } : null }
+        : { grain: 0, vignette: 0, glow: 0, duotone: null };
       wallpaperPatternSelect.value = preset.pattern;
       wallpaperSpeedSlider.value = Math.round(preset.speed * 10);
       wallpaperSpeedValue.textContent = `${preset.speed.toFixed(1)}×`;
       renderWallpaperColorsList();
+      syncWallpaperEffectsUI();
       if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
       showToast(`Loaded "${preset.name}"`);
     });
@@ -1916,6 +2024,30 @@ wallpaperDuotoneToggle.addEventListener('change', () => {
 wallpaperDuotoneShadow.addEventListener('input', updateWallpaperDuotone);
 wallpaperDuotoneHighlight.addEventListener('input', updateWallpaperDuotone);
 
+/* Pushes wallpaperState.effects into the slider/toggle UI — needed after
+   a style-pack click, since that changes wallpaperState.effects directly
+   rather than through these controls, and the controls would otherwise
+   silently go stale. */
+function syncWallpaperEffectsUI() {
+  const fx = wallpaperState.effects;
+  wallpaperGrainSlider.value = Math.round(fx.grain * 100);
+  wallpaperGrainValue.textContent = `${Math.round(fx.grain * 100)}%`;
+  wallpaperVignetteSlider.value = Math.round(fx.vignette * 100);
+  wallpaperVignetteValue.textContent = `${Math.round(fx.vignette * 100)}%`;
+  wallpaperGlowSlider.value = Math.round(fx.glow * 100);
+  wallpaperGlowValue.textContent = `${Math.round(fx.glow * 100)}%`;
+  wallpaperDuotoneToggle.checked = !!fx.duotone;
+  wallpaperDuotoneColors.hidden = !fx.duotone;
+  if (fx.duotone) {
+    wallpaperDuotoneShadow.value = fx.duotone.shadow;
+    wallpaperDuotoneHighlight.value = fx.duotone.highlight;
+  }
+}
+
+document.getElementById('wallpaperSafeZoneToggle').addEventListener('change', (e) => {
+  document.getElementById('wallpaperSafeZoneOverlay').hidden = !e.target.checked;
+});
+
 wallpaperModeSeg.addEventListener('click', (e) => {
   const btn = e.target.closest('.seg-btn');
   if (!btn) return;
@@ -1954,6 +2086,7 @@ document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () 
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
   drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `wallpaper-${w}x${h}.png`);
   showToast('Wallpaper PNG downloaded');
@@ -1974,6 +2107,7 @@ btnSetAsWallpaper.addEventListener('click', async () => {
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
   drawWatermark(ctx, w, h);
   canvas.toBlob(async (blob) => {
     try {

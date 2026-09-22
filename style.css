@@ -574,6 +574,43 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   position: relative;
 }
 
+/* Purely a preview aid — shows roughly where a phone's lock-screen clock
+   and icon dock sit, so detail-heavy grain/effects aren't wasted under
+   them. Sized to match the canvas's own box (inset by the frame's 8px
+   padding), never touches export output. */
+.safe-zone-overlay {
+  position: absolute;
+  inset: 8px;
+  border-radius: calc(var(--radius-lg) - 6px);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+.safe-zone-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed rgba(255, 255, 255, 0.6);
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.07);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.safe-zone-band span {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  text-transform: uppercase;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 999px;
+}
+.safe-zone-clock { top: 8%; height: 22%; }
+.safe-zone-icons { bottom: 0; height: 12%; }
+
 .fullscreen-btn {
   position: absolute;
   top: 18px;
@@ -990,6 +1027,26 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 /* ---------------- mesh studio ---------------- */
 .mesh-studio { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; align-items: start; }
 .mesh-preview { position: relative; }
+
+/* Draggable handle for a mesh blob, positioned at the blob's x%/y% inside
+   .mesh-preview. touch-action: none stops the page from scrolling while
+   a finger drags one on mobile. */
+.mesh-drag-handle {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  margin-left: -12px;
+  margin-top: -12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+  touch-action: none;
+  z-index: 2;
+  transition: transform 0.15s ease;
+}
+.mesh-drag-handle:hover { transform: scale(1.12); }
+.mesh-drag-handle.dragging { cursor: grabbing; transform: scale(1.22); transition: none; }
 
 .mesh-base-row {
   display: flex;

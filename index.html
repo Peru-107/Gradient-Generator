@@ -309,6 +309,10 @@
         <div class="preview-col">
           <div class="preview-frame">
             <canvas id="wallpaperCanvas" class="wallpaper-canvas"></canvas>
+            <div class="safe-zone-overlay" id="wallpaperSafeZoneOverlay" hidden>
+              <div class="safe-zone-band safe-zone-clock"><span>Lock screen clock area</span></div>
+              <div class="safe-zone-band safe-zone-icons"><span>Icons / dock area</span></div>
+            </div>
             <button class="fullscreen-btn" id="btnFullscreenWallpaper" title="Full screen preview" aria-label="Full screen preview">⤢</button>
           </div>
 
@@ -330,7 +334,10 @@
                 <option value="1920x1080">⭐ Desktop (1920×1080)</option>
                 <option value="3840x2160">⭐ 4K UHD (3840×2160)</option>
                 <option value="1080x1080">⭐ Square (1080×1080)</option>
+                <option value="1080x1920">⭐ Story / Reel (1080×1920)</option>
+                <option value="2048x2732">⭐ Tablet (2048×2732)</option>
                 <option value="3440x1440">⭐ Ultrawide (3440×1440)</option>
+                <option value="7680x2160">⭐ Dual 4K Monitor (7680×2160)</option>
               </select>
               <button id="btnDownloadWallpaperPng" class="btn">⬇ PNG</button>
               <button id="btnSetAsWallpaper" class="btn" hidden>🖼 Set as Wallpaper</button>
@@ -393,13 +400,23 @@
             </div>
           </div>
 
-          <details class="control-card">
-            <summary class="control-label more-options-summary">More options ▾</summary>
-            <div class="more-options-body">
-              <label class="control-label">Presets</label>
-              <div id="wallpaperPresetsGrid" class="presets-grid"></div>
-            </div>
-          </details>
+          <div class="control-card">
+            <label class="control-label">Style packs</label>
+            <p class="hint" style="margin-top:-4px;">One click sets the pattern, colors, and effects together — a full look, not just a palette.</p>
+            <div id="wallpaperPresetsGrid" class="presets-grid"></div>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label control-label-row"><span>Safe-zone preview</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperSafeZoneToggle"><span></span></label>
+            </label>
+            <p class="hint">Shows roughly where a lock screen's clock and icons usually sit, so your best detail isn't hidden under them. Preview only — never affects exports.</p>
+
+            <label class="control-label control-label-row"><span>True-black export (AMOLED)</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperAmoledToggle"><span></span></label>
+            </label>
+            <p class="hint">Crushes near-black shadows to pure black in PNG/wallpaper exports — saves real battery on OLED phone screens.</p>
+          </div>
         </div>
       </div>
     </section>
