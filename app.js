@@ -3721,18 +3721,81 @@ window.addEventListener('offline', updateOfflineIndicator);
 updateOfflineIndicator();
 
 /* ==========================================================================
-   Keyboard shortcuts
+   Keyboard shortcuts — customizable
+   ----------------------------------------------------------------
+   A single source of truth (DEFAULT_SHORTCUTS + userShortcuts overrides
+   in localStorage) that every keydown listener below consults via
+   shortcutMatches(), instead of hardcoding keys. The Shortcuts modal
+   (openShortcutsModal) lets someone rebind any of these; nothing else
+   needs to change when they do.
    ========================================================================== */
+
+const DEFAULT_SHORTCUTS = {
+  randomize: { key: ' ', ctrl: false, shift: false, label: 'Randomize current studio' },
+  undo: { key: 'z', ctrl: true, shift: false, label: 'Undo' },
+  redo: { key: 'z', ctrl: true, shift: true, label: 'Redo' },
+  commandPalette: { key: 'k', ctrl: true, shift: false, label: 'Open command palette' },
+  tab1: { key: '1', ctrl: false, shift: false, label: 'Switch to Gradient Studio' },
+  tab2: { key: '2', ctrl: false, shift: false, label: 'Switch to Palette Studio' },
+  tab3: { key: '3', ctrl: false, shift: false, label: 'Switch to Mesh Studio' },
+  tab4: { key: '4', ctrl: false, shift: false, label: 'Switch to Wallpaper Studio' },
+  tab5: { key: '5', ctrl: false, shift: false, label: 'Switch to Image Extract' },
+};
+const SHORTCUT_TABS = ['gradient', 'palette', 'mesh', 'wallpaper', 'image'];
+
+let userShortcuts = {};
+function loadShortcuts() {
+  try {
+    const raw = localStorage.getItem('gradii_shortcuts');
+    userShortcuts = raw ? JSON.parse(raw) : {};
+  } catch (e) { userShortcuts = {}; }
+}
+function saveShortcuts() {
+  try { localStorage.setItem('gradii_shortcuts', JSON.stringify(userShortcuts)); } catch (e) { /* ignore */ }
+}
+function getShortcut(action) {
+  return userShortcuts[action] || DEFAULT_SHORTCUTS[action];
+}
+function isMacPlatform() {
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+}
+function formatShortcutKey(key) {
+  if (key === ' ') return 'Space';
+  if (key.length === 1) return key.toUpperCase();
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+function formatShortcut(sc) {
+  const parts = [];
+  if (sc.ctrl) parts.push(isMacPlatform() ? '⌘' : 'Ctrl');
+  if (sc.shift) parts.push(isMacPlatform() ? '⇧' : 'Shift');
+  parts.push(formatShortcutKey(sc.key));
+  return parts.join(isMacPlatform() && sc.ctrl ? '' : '+');
+}
+function shortcutMatches(e, action) {
+  const sc = getShortcut(action);
+  const key = sc.key === ' ' ? ' ' : sc.key.toLowerCase();
+  const eKey = e.key === ' ' ? ' ' : e.key.toLowerCase();
+  return eKey === key && !!sc.ctrl === !!(e.ctrlKey || e.metaKey) && !!sc.shift === !!e.shiftKey;
+}
+loadShortcuts();
 
 document.addEventListener('keydown', (e) => {
   const tag = document.activeElement.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-  if (e.code === 'Space') {
+  if (shortcutMatches(e, 'randomize')) {
     e.preventDefault();
     if (activeTab === 'palette') generatePalette();
     else if (activeTab === 'gradient') randomizeGradient();
     else if (activeTab === 'mesh') randomizeMesh();
     else if (activeTab === 'wallpaper') randomizeWallpaperColors();
+    return;
+  }
+  for (let i = 0; i < SHORTCUT_TABS.length; i++) {
+    if (shortcutMatches(e, 'tab' + (i + 1))) {
+      e.preventDefault();
+      setActiveTab(SHORTCUT_TABS[i]);
+      return;
+    }
   }
   if (activeTab === 'palette' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     e.preventDefault();
@@ -4109,8 +4172,8 @@ const wallpaperHistory = createStudioHistory(
 );
 
 document.addEventListener('keydown', (e) => {
-  const isUndo = (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z';
-  const isRedo = (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'));
+  const isUndo = shortcutMatches(e, 'undo');
+  const isRedo = shortcutMatches(e, 'redo') || ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'y');
   if (!isUndo && !isRedo) return;
   const tag = document.activeElement.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -4342,6 +4405,8 @@ const COMMANDS = [
   { icon: '🎨', label: 'Extract palette from wallpaper', action: () => document.getElementById('btnExtractPaletteFromWallpaper').click() },
   { icon: '🔀', label: 'Remix wallpaper effects', action: () => document.getElementById('btnRemixWallpaper').click() },
   { icon: '📦', label: 'Batch export wallpapers', action: () => document.getElementById('btnBatchExportWallpaper').click() },
+  { icon: '⌨', label: 'Keyboard Shortcuts', action: () => openShortcutsModal() },
+  { icon: '❓', label: 'Replay onboarding tour', action: () => startOnboardingTour(true) },
 ];
 
 let commandActiveIndex = 0;
@@ -4400,13 +4465,260 @@ document.getElementById('commandPaletteOverlay').addEventListener('click', (e) =
 });
 
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+  // Only guard against typing when this shortcut has been customized down to
+  // a bare key with no modifier — the Ctrl/⌘+K default is safe to catch even
+  // while a text field is focused (same convention as most editors).
+  const sc = getShortcut('commandPalette');
+  if (!sc.ctrl && !sc.shift) {
+    const tag = document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  }
+  if (shortcutMatches(e, 'commandPalette')) {
     e.preventDefault();
     const overlay = document.getElementById('commandPaletteOverlay');
     if (overlay.hidden) openCommandPalette(); else closeCommandPalette();
   }
 });
 document.getElementById('btnOpenCommandPalette').addEventListener('click', openCommandPalette);
+
+/* ==========================================================================
+   Keyboard shortcuts modal — rebind any action above
+   ========================================================================== */
+
+let shortcutCapturingAction = null;
+
+function renderShortcutsList() {
+  const list = document.getElementById('shortcutsList');
+  list.innerHTML = '';
+  Object.keys(DEFAULT_SHORTCUTS).forEach((action) => {
+    const sc = getShortcut(action);
+    const isCustom = !!userShortcuts[action];
+    const isCapturing = shortcutCapturingAction === action;
+    const row = document.createElement('div');
+    row.className = 'shortcut-row';
+    row.innerHTML = `
+      <span class="shortcut-row-label">${DEFAULT_SHORTCUTS[action].label}</span>
+      <div class="shortcut-row-actions">
+        <span class="shortcut-key${isCapturing ? ' capturing' : ''}">${isCapturing ? 'Press a key…' : formatShortcut(sc)}</span>
+        <button class="btn btn-sm" data-shortcut-change="${action}">${isCapturing ? 'Cancel' : 'Change'}</button>
+        ${isCustom ? `<button class="btn btn-sm" data-shortcut-reset="${action}" title="Reset to default">↺</button>` : ''}
+      </div>`;
+    list.appendChild(row);
+  });
+}
+
+function beginShortcutCapture(action) {
+  shortcutCapturingAction = action;
+  renderShortcutsList();
+}
+
+function cancelShortcutCapture() {
+  shortcutCapturingAction = null;
+  renderShortcutsList();
+}
+
+document.getElementById('shortcutsList').addEventListener('click', (e) => {
+  const changeBtn = e.target.closest('[data-shortcut-change]');
+  const resetBtn = e.target.closest('[data-shortcut-reset]');
+  if (changeBtn) {
+    const action = changeBtn.dataset.shortcutChange;
+    if (shortcutCapturingAction === action) cancelShortcutCapture();
+    else beginShortcutCapture(action);
+  } else if (resetBtn) {
+    delete userShortcuts[resetBtn.dataset.shortcutReset];
+    saveShortcuts();
+    renderShortcutsList();
+  }
+});
+
+// Capture-phase listener so a rebind (e.g. a bare letter) never also fires
+// its old/new action or leaks into the page while the modal is capturing.
+document.addEventListener('keydown', (e) => {
+  if (!shortcutCapturingAction) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === 'Escape') { cancelShortcutCapture(); return; }
+  if (['Control', 'Meta', 'Shift', 'Alt'].includes(e.key)) return; // wait for a real key
+  const action = shortcutCapturingAction;
+  const candidate = { key: e.key, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey, label: DEFAULT_SHORTCUTS[action].label };
+  const collision = Object.keys(DEFAULT_SHORTCUTS).find((other) => {
+    if (other === action) return false;
+    const sc = getShortcut(other);
+    return sc.key.toLowerCase() === (candidate.key === ' ' ? ' ' : candidate.key.toLowerCase())
+      && !!sc.ctrl === !!candidate.ctrl && !!sc.shift === !!candidate.shift;
+  });
+  if (collision) {
+    showToast(`Already used by "${DEFAULT_SHORTCUTS[collision].label}"`);
+    cancelShortcutCapture();
+    return;
+  }
+  userShortcuts[action] = candidate;
+  saveShortcuts();
+  shortcutCapturingAction = null;
+  renderShortcutsList();
+  showToast('Shortcut updated');
+}, true);
+
+function openShortcutsModal() {
+  shortcutCapturingAction = null;
+  renderShortcutsList();
+  document.getElementById('shortcutsOverlay').hidden = false;
+}
+function closeShortcutsModal() {
+  shortcutCapturingAction = null;
+  document.getElementById('shortcutsOverlay').hidden = true;
+}
+document.getElementById('btnEyedropperInfo').addEventListener('click', openShortcutsModal);
+document.getElementById('btnCloseShortcuts').addEventListener('click', closeShortcutsModal);
+document.getElementById('shortcutsOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'shortcutsOverlay') closeShortcutsModal();
+});
+document.getElementById('btnResetShortcuts').addEventListener('click', () => {
+  userShortcuts = {};
+  saveShortcuts();
+  renderShortcutsList();
+  showToast('Shortcuts reset to default');
+});
+
+/* ==========================================================================
+   First-time onboarding tour
+   ----------------------------------------------------------------
+   Runs once automatically (gated on a localStorage flag) and can be
+   replayed anytime via the command palette. Points at real, currently
+   visible controls on the default (gradient) tab rather than switching
+   tabs mid-tour, and skips any step whose target isn't actually on
+   screen instead of highlighting nothing.
+   ========================================================================== */
+
+const ONBOARDING_STEPS = [
+  { selector: '.tabs', title: 'Five studios, one app', text: 'Gradients, Palettes, Mesh, Wallpaper, and Image Extract — switch anytime, and your work in each is kept as you go.' },
+  { selector: '#btnRandomGradient', title: 'Randomize anything', text: 'Click Randomize, or just press Space — it works on whichever studio tab you’re on.' },
+  { selector: '#btnOpenCommandPalette', title: 'Command palette', text: 'Press Ctrl/⌘K to jump to any action: switch tabs, undo, export, change theme, and more.' },
+  { selector: '#btnEyedropperInfo', title: 'Your shortcuts, your way', text: 'Every keyboard shortcut here can be rebound to whatever feels natural to you.' },
+  { selector: '#themeToggle', title: 'Pick a look', text: 'Seven themes, including a high-contrast one for accessibility and one that follows your system automatically.' },
+  { selector: '#btnOpenPro', title: 'Gradii Pro', text: 'Unlocks batch export, multi-monitor wallpapers, extra themes, and more — everything else here stays free.' },
+];
+
+let onboardingStepIndex = 0;
+let onboardingActive = false;
+
+const onboardingEls = {};
+function getOnboardingEls() {
+  if (!onboardingEls.top) {
+    onboardingEls.top = document.getElementById('onboardingMaskTop');
+    onboardingEls.bottom = document.getElementById('onboardingMaskBottom');
+    onboardingEls.left = document.getElementById('onboardingMaskLeft');
+    onboardingEls.right = document.getElementById('onboardingMaskRight');
+    onboardingEls.ring = document.getElementById('onboardingRing');
+    onboardingEls.card = document.getElementById('onboardingCard');
+  }
+  return onboardingEls;
+}
+
+function setOnboardingUiHidden(hidden) {
+  const els = getOnboardingEls();
+  [els.top, els.bottom, els.left, els.right, els.ring, els.card].forEach(el => { el.hidden = hidden; });
+}
+
+function positionOnboardingUi(target) {
+  const els = getOnboardingEls();
+  const r = target.getBoundingClientRect();
+  const pad = 6;
+  const top = Math.max(0, r.top - pad);
+  const bottom = Math.min(window.innerHeight, r.bottom + pad);
+  const left = Math.max(0, r.left - pad);
+  const right = Math.min(window.innerWidth, r.right + pad);
+
+  Object.assign(els.top.style, { top: '0px', left: '0px', width: '100%', height: `${top}px` });
+  Object.assign(els.bottom.style, { top: `${bottom}px`, left: '0px', width: '100%', height: `${Math.max(0, window.innerHeight - bottom)}px` });
+  Object.assign(els.left.style, { top: `${top}px`, left: '0px', width: `${left}px`, height: `${bottom - top}px` });
+  Object.assign(els.right.style, { top: `${top}px`, left: `${right}px`, width: `${Math.max(0, window.innerWidth - right)}px`, height: `${bottom - top}px` });
+  Object.assign(els.ring.style, { top: `${top}px`, left: `${left}px`, width: `${right - left}px`, height: `${bottom - top}px` });
+
+  const cardRect = els.card.getBoundingClientRect();
+  const gap = 12;
+  let cardTop = bottom + gap;
+  if (cardTop + cardRect.height > window.innerHeight - 16) cardTop = Math.max(16, top - gap - cardRect.height);
+  let cardLeft = Math.min(left, window.innerWidth - cardRect.width - 16);
+  cardLeft = Math.max(16, cardLeft);
+  els.card.style.top = `${Math.round(cardTop)}px`;
+  els.card.style.left = `${Math.round(cardLeft)}px`;
+}
+
+function renderOnboardingStep() {
+  while (onboardingStepIndex < ONBOARDING_STEPS.length) {
+    const step = ONBOARDING_STEPS[onboardingStepIndex];
+    const target = document.querySelector(step.selector);
+    if (target && target.getBoundingClientRect().width > 0) break;
+    onboardingStepIndex++;
+  }
+  if (onboardingStepIndex >= ONBOARDING_STEPS.length) { endOnboardingTour(); return; }
+
+  const step = ONBOARDING_STEPS[onboardingStepIndex];
+  const target = document.querySelector(step.selector);
+  // Always instant, never smooth: positionOnboardingUi() below reads the
+  // target's post-scroll rect one frame later, and a smooth scroll (still
+  // animating at that point) leaves the fixed card positioned from a stale
+  // rect — it can end up placed outside the viewport entirely.
+  target.scrollIntoView({ block: 'center', behavior: 'auto' });
+
+  document.getElementById('onboardingStepCount').textContent = `Step ${onboardingStepIndex + 1} of ${ONBOARDING_STEPS.length}`;
+  document.getElementById('onboardingTitle').textContent = step.title;
+  document.getElementById('onboardingText').textContent = step.text;
+  document.getElementById('btnOnboardingBack').style.visibility = onboardingStepIndex === 0 ? 'hidden' : 'visible';
+  document.getElementById('btnOnboardingNext').textContent = onboardingStepIndex === ONBOARDING_STEPS.length - 1 ? 'Done' : 'Next';
+
+  requestAnimationFrame(() => positionOnboardingUi(target));
+}
+
+function onboardingResizeHandler() {
+  if (!onboardingActive) return;
+  const step = ONBOARDING_STEPS[onboardingStepIndex];
+  if (!step) return;
+  const target = document.querySelector(step.selector);
+  if (target) positionOnboardingUi(target);
+}
+window.addEventListener('resize', onboardingResizeHandler);
+
+function startOnboardingTour(force) {
+  if (!force) {
+    let seen = false;
+    try { seen = localStorage.getItem('gradii_onboarding_seen') === '1'; } catch (e) { /* ignore */ }
+    if (seen) return;
+  }
+  onboardingStepIndex = 0;
+  onboardingActive = true;
+  setOnboardingUiHidden(false);
+  renderOnboardingStep();
+}
+
+function endOnboardingTour() {
+  onboardingActive = false;
+  setOnboardingUiHidden(true);
+  try { localStorage.setItem('gradii_onboarding_seen', '1'); } catch (e) { /* ignore */ }
+}
+
+document.getElementById('btnOnboardingNext').addEventListener('click', () => {
+  onboardingStepIndex++;
+  if (onboardingStepIndex >= ONBOARDING_STEPS.length) endOnboardingTour();
+  else renderOnboardingStep();
+});
+document.getElementById('btnOnboardingBack').addEventListener('click', () => {
+  if (onboardingStepIndex > 0) { onboardingStepIndex--; renderOnboardingStep(); }
+});
+document.getElementById('btnOnboardingSkip').addEventListener('click', endOnboardingTour);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && onboardingActive) endOnboardingTour();
+});
+// The mask is click-through (see its CSS), so a click reaching anywhere
+// outside the tour card means the person went straight for the real app
+// instead of using Next/Skip — treat that as "got it" rather than trapping
+// the click or leaving the tour open over whatever they just did.
+document.addEventListener('click', (e) => {
+  if (!onboardingActive) return;
+  if (e.target.closest('#onboardingCard')) return;
+  endOnboardingTour();
+}, true);
 
 /* ==========================================================================
    Init
@@ -4446,6 +4758,8 @@ function init() {
 
   initGlobalPressFeedback();
   introReveal();
+
+  setTimeout(() => startOnboardingTour(false), prefersReducedMotion ? 200 : 900);
 }
 
 init();

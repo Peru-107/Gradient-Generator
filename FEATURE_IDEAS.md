@@ -4,9 +4,9 @@ A running wishlist of features discussed but not yet built. Not a commitment
 or a roadmap with dates — just ideas worth remembering. Pull from here when
 picking what to build next; update it as ideas get built or dropped.
 
-Phase 1, Phase 2, and Phase 3 (frontend-only, minus anything text-related)
-have shipped — items below are marked ✅ **Done** with a one-line note on
-how. Phase 4 (polish) is still open.
+Phases 1 through 4 (frontend-only, minus anything text-related) have
+shipped — items below are marked ✅ **Done** with a one-line note on how.
+Only the big backend build (#49/#50) remains open.
 
 ## Gradient Studio
 
@@ -61,8 +61,8 @@ how. Phase 4 (polish) is still open.
 
 35. ✅ **Done** — **Undo/redo stack** — ⌘Z/⌘⇧Z per studio; a debounced auto-snapshot on any input/change/click inside each studio's container, so nothing needs manual instrumentation. Palette reuses its existing arrow-key history.
 36. ✅ **Done** — **Command palette (⌘K)** — fuzzy-filtered list of ~20 actions (switch tab, randomize, undo/redo, save, export, theme, Pro, Projects), arrow-key navigable.
-37. **First-time onboarding tour** — contextual, dismissible tooltips.
-38. **Custom keyboard shortcut remapping**.
+37. ✅ **Done** — **First-time onboarding tour** — 6-step spotlight tour (tabs, randomize, command palette, shortcuts, theme, Pro), shows once automatically and replays anytime via the command palette. Points at real controls on the default tab rather than a generic walkthrough; a step is skipped if its target isn't actually on screen instead of highlighting nothing.
+38. ✅ **Done** — **Custom keyboard shortcut remapping** — every shortcut (randomize, undo, redo, command palette, the five tab switches) now goes through one configurable source of truth instead of hardcoded keys; a Shortcuts modal (the ⌨ topbar icon) lets you rebind any of them, with collision detection and a reset-to-default.
 39. ✅ **Done** — **Named local "projects"** — a Projects modal (via ⌘K) bundles gradient+palette+mesh+wallpaper state under one name, save/load/delete.
 40. ✅ **Done** — **Cross-studio "recently generated" strip** — a persistent thumbnail strip below the topbar, populated on every Randomize/Generate across all 4 studios, click to restore.
 41. ✅ **Done** — **Offline-status indicator** — a banner appears only while `navigator.onLine` is false; silent the rest of the time by design.
@@ -82,10 +82,7 @@ how. Phase 4 (polish) is still open.
 
 ## Phase 3 — shipped (accelerometer parallax, chapters, time-of-day shift — see #24/#27/#29 above for the actual scoping decisions each one landed with)
 
-## Phase 4 — polish (needs its own design pass)
-
-- #37 First-time onboarding tour
-- #38 Custom keyboard shortcut remapping
+## Phase 4 — shipped (onboarding tour, keyboard shortcut remapping — see #37/#38 above)
 
 ## The big one
 
