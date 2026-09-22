@@ -1639,13 +1639,92 @@ function wpDrawWaveBands(ctx, w, h, t, colors, speed) {
   });
 }
 
-function wpDrawFrame(pattern, ctx, w, h, t, colors, speed) {
+/* A small tileable noise swatch, regenerated fresh each call rather than
+   cached, so this stays a pure function safe to serialize into the
+   standalone HTML export (see exportWallpaperHtml()) — no module-level
+   state to lose in translation. 128px is cheap to generate every frame
+   and, being pure white noise rather than a repeating photo texture,
+   tiles with no visible seam at any output resolution. */
+function wpMakeNoiseCanvas(size) {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const nctx = c.getContext('2d');
+  const imgData = nctx.createImageData(size, size);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const v = Math.random() * 255;
+    data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+  }
+  nctx.putImageData(imgData, 0, 0);
+  return c;
+}
+
+/* Post-processing pass applied on top of a finished pattern frame.
+   Order matters: glow (adds light) and duotone (remaps the whole tonal
+   range) happen first since they're transformations of the image itself;
+   vignette and grain are surface treatments layered on top of that,
+   grain always last so it reads as texture over the final image rather
+   than something duotone/vignette then wash out. Each effect is a no-op
+   at 0/off so callers can always pass wallpaperState.effects unchanged. */
+function wpApplyEffects(ctx, w, h, effects) {
+  if (!effects) return;
+  const grain = effects.grain || 0;
+  const vignette = effects.vignette || 0;
+  const glow = effects.glow || 0;
+  const duotone = effects.duotone;
+
+  if (glow > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, glow);
+    ctx.filter = `blur(${Math.round(Math.min(w, h) * 0.05 * glow)}px)`;
+    ctx.drawImage(ctx.canvas, 0, 0, w, h);
+    ctx.restore();
+  }
+  if (duotone && duotone.shadow && duotone.highlight) {
+    ctx.save();
+    ctx.filter = 'grayscale(1)';
+    ctx.globalCompositeOperation = 'copy';
+    ctx.drawImage(ctx.canvas, 0, 0, w, h);
+    ctx.filter = 'none';
+    ctx.globalCompositeOperation = 'color';
+    const grad = ctx.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, duotone.shadow);
+    grad.addColorStop(1, duotone.highlight);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+  if (vignette > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    const r = Math.max(w, h) * 0.75;
+    const grad = ctx.createRadialGradient(w / 2, h / 2, r * (1 - vignette * 0.55), w / 2, h / 2, r);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, `rgba(0,0,0,${Math.min(0.85, vignette)})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+  if (grain > 0) {
+    const pattern = ctx.createPattern(wpMakeNoiseCanvas(128), 'repeat');
+    ctx.save();
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = Math.min(0.5, grain);
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+}
+
+function wpDrawFrame(pattern, ctx, w, h, t, colors, speed, effects) {
   ctx.save();
   if (pattern === 'auroraFlow') wpDrawAuroraFlow(ctx, w, h, t, colors, speed);
   else if (pattern === 'radialPulse') wpDrawRadialPulse(ctx, w, h, t, colors, speed);
   else if (pattern === 'conicSpin') wpDrawConicSpin(ctx, w, h, t, colors, speed);
   else if (pattern === 'waveBands') wpDrawWaveBands(ctx, w, h, t, colors, speed);
   else wpDrawFlowingMesh(ctx, w, h, t, colors, speed);
+  wpApplyEffects(ctx, w, h, effects);
   ctx.restore();
 }
 
@@ -1665,6 +1744,7 @@ let wallpaperState = {
   speed: 1.0,
   live: true,
   colors: ['#0f1020', '#6d5dfc', '#ff6b9d', '#22d3c5'],
+  effects: { grain: 0, vignette: 0, glow: 0, duotone: null },
 };
 
 const wallpaperCanvas = document.getElementById('wallpaperCanvas');
@@ -1691,7 +1771,7 @@ function resizeWallpaperCanvas() {
 }
 
 function drawWallpaperFrame(t) {
-  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, t, wallpaperState.colors, wallpaperState.speed);
+  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, t, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
 }
 
 function wallpaperTick(ts) {
@@ -1794,6 +1874,48 @@ wallpaperSpeedSlider.addEventListener('input', () => {
   if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
 });
 
+const wallpaperGrainSlider = document.getElementById('wallpaperGrainSlider');
+const wallpaperGrainValue = document.getElementById('wallpaperGrainValue');
+const wallpaperVignetteSlider = document.getElementById('wallpaperVignetteSlider');
+const wallpaperVignetteValue = document.getElementById('wallpaperVignetteValue');
+const wallpaperGlowSlider = document.getElementById('wallpaperGlowSlider');
+const wallpaperGlowValue = document.getElementById('wallpaperGlowValue');
+const wallpaperDuotoneToggle = document.getElementById('wallpaperDuotoneToggle');
+const wallpaperDuotoneColors = document.getElementById('wallpaperDuotoneColors');
+const wallpaperDuotoneShadow = document.getElementById('wallpaperDuotoneShadow');
+const wallpaperDuotoneHighlight = document.getElementById('wallpaperDuotoneHighlight');
+
+wallpaperGrainSlider.addEventListener('input', () => {
+  wallpaperState.effects.grain = Number(wallpaperGrainSlider.value) / 100;
+  wallpaperGrainValue.textContent = `${wallpaperGrainSlider.value}%`;
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+});
+
+wallpaperVignetteSlider.addEventListener('input', () => {
+  wallpaperState.effects.vignette = Number(wallpaperVignetteSlider.value) / 100;
+  wallpaperVignetteValue.textContent = `${wallpaperVignetteSlider.value}%`;
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+});
+
+wallpaperGlowSlider.addEventListener('input', () => {
+  wallpaperState.effects.glow = Number(wallpaperGlowSlider.value) / 100;
+  wallpaperGlowValue.textContent = `${wallpaperGlowSlider.value}%`;
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+});
+
+function updateWallpaperDuotone() {
+  wallpaperState.effects.duotone = wallpaperDuotoneToggle.checked
+    ? { shadow: wallpaperDuotoneShadow.value, highlight: wallpaperDuotoneHighlight.value }
+    : null;
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+}
+wallpaperDuotoneToggle.addEventListener('change', () => {
+  wallpaperDuotoneColors.hidden = !wallpaperDuotoneToggle.checked;
+  updateWallpaperDuotone();
+});
+wallpaperDuotoneShadow.addEventListener('input', updateWallpaperDuotone);
+wallpaperDuotoneHighlight.addEventListener('input', updateWallpaperDuotone);
+
 wallpaperModeSeg.addEventListener('click', (e) => {
   const btn = e.target.closest('.seg-btn');
   if (!btn) return;
@@ -1831,7 +1953,7 @@ document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () 
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed);
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
   drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `wallpaper-${w}x${h}.png`);
   showToast('Wallpaper PNG downloaded');
@@ -1851,7 +1973,7 @@ btnSetAsWallpaper.addEventListener('click', async () => {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed);
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
   drawWatermark(ctx, w, h);
   canvas.toBlob(async (blob) => {
     try {
@@ -1937,13 +2059,14 @@ let audioLevel = 0;
 `;
 
 function exportWallpaperHtml() {
-  const functionsSrc = [wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands, wpDrawFrame]
+  const functionsSrc = [wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands, wpMakeNoiseCanvas, wpApplyEffects, wpDrawFrame]
     .map(fn => fn.toString())
     .join('\n\n');
   const stateJson = JSON.stringify({
     pattern: wallpaperState.pattern,
     colors: wallpaperState.colors,
     speed: wallpaperState.speed,
+    effects: wallpaperState.effects,
   });
   const audioReactive = document.getElementById('wallpaperAudioReactive').checked;
   const html = `<!doctype html>
@@ -1977,7 +2100,7 @@ function loop(ts) {
   if (start === null) start = ts;
   const t = (ts - start) / 1000;
   const speed = wallpaperData.speed * (1 + audioLevel * 2.2);
-  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed);
+  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed, wallpaperData.effects);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

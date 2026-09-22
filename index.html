@@ -371,6 +371,28 @@
             <button id="btnRandomWallpaperColors" class="btn btn-primary wallpaper-randomize-btn">🎲 Randomize Colors</button>
           </div>
 
+          <div class="control-card">
+            <label class="control-label">Effects</label>
+
+            <label class="control-label-row"><span>Grain <span id="wallpaperGrainValue" class="control-value">0%</span></span></label>
+            <input type="range" id="wallpaperGrainSlider" min="0" max="100" value="0" class="slider">
+            <p class="hint">A subtle film-grain texture, instead of a flat, glassy gradient.</p>
+
+            <label class="control-label-row"><span>Vignette <span id="wallpaperVignetteValue" class="control-value">0%</span></span></label>
+            <input type="range" id="wallpaperVignetteSlider" min="0" max="100" value="0" class="slider">
+
+            <label class="control-label-row"><span>Glow <span id="wallpaperGlowValue" class="control-value">0%</span></span></label>
+            <input type="range" id="wallpaperGlowSlider" min="0" max="100" value="0" class="slider">
+
+            <label class="control-label control-label-row"><span>Duotone (two-color tint)</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperDuotoneToggle"><span></span></label>
+            </label>
+            <div class="duotone-colors" id="wallpaperDuotoneColors" hidden>
+              <input type="color" id="wallpaperDuotoneShadow" value="#160f2e" aria-label="Duotone shadow color" title="Shadow color">
+              <input type="color" id="wallpaperDuotoneHighlight" value="#ff9ecf" aria-label="Duotone highlight color" title="Highlight color">
+            </div>
+          </div>
+
           <details class="control-card">
             <summary class="control-label more-options-summary">More options ▾</summary>
             <div class="more-options-body">
