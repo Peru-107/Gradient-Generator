@@ -56,6 +56,7 @@
       <div class="dropdown theme-picker">
         <button id="themeToggle" class="icon-btn" title="Choose theme">🌙</button>
         <div class="dropdown-menu theme-menu" id="themeMenu">
+          <button data-theme-choice="system"><span class="theme-swatch theme-swatch-system"></span>Match System</button>
           <button data-theme-choice="light"><span class="theme-swatch theme-swatch-light"></span>Light</button>
           <button data-theme-choice="dark"><span class="theme-swatch theme-swatch-dark"></span>Dark</button>
           <button data-theme-choice="aurora"><span class="theme-swatch theme-swatch-aurora"></span>Aurora Bento <span class="theme-pro-tag">PRO</span></button>
@@ -92,6 +93,7 @@
                 <option value="1080x1080">⭐ Square (1080×1080)</option>
               </select>
               <button id="btnDownloadPng" class="btn">⬇ PNG</button>
+              <button id="btnCopyGradientImage" class="btn btn-sm" title="Copy image to clipboard">📋 Copy Image</button>
               <div class="dropdown">
                 <button id="btnExportGradient" class="btn">⬇ More ▾</button>
                 <div class="dropdown-menu" id="gradientExportMenu">
@@ -114,6 +116,23 @@
               <label class="oklch-switch"><input type="checkbox" id="gradientOklchToggle"><span></span></label>
             </label>
             <p class="hint">Avoids the muddy grey that plain gradients can pass through between two bright colors.</p>
+
+            <label class="control-label control-label-row"><span>Reduce banding</span>
+              <label class="oklch-switch"><input type="checkbox" id="gradientDitherToggle"><span></span></label>
+            </label>
+            <p class="hint">Adds a barely-visible fine texture to PNG downloads so smooth gradients don't show hard color steps.</p>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label control-label-row"><span>Temperature</span><span id="gradientTempValue" class="control-value">0</span></label>
+            <input type="range" id="gradientTempSlider" min="-50" max="50" value="0" class="slider">
+            <p class="hint">A live cool ↔ warm tint on top of your colors — your actual stop colors never change, so this always resets cleanly.</p>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label control-label-row"><span>Repeat</span><span id="gradientRepeatValue" class="control-value">1×</span></label>
+            <input type="range" id="gradientRepeatSlider" min="1" max="6" value="1" class="slider">
+            <p class="hint">Tiles your gradient across itself for a striped/banded look instead of one smooth sweep.</p>
           </div>
 
           <div class="control-card">
@@ -157,6 +176,7 @@
             <summary class="control-label more-options-summary">More options ▾</summary>
             <div class="more-options-body">
               <label class="control-label">Presets</label>
+              <div id="presetTagFilter" class="tag-filter"></div>
               <div id="presetsGrid" class="presets-grid"></div>
             </div>
           </details>
@@ -198,6 +218,7 @@
             <button id="btnExportPalette" class="btn">⬇ Export ▾</button>
             <div class="dropdown-menu" id="exportMenu">
               <button data-export="png">PNG Image</button>
+              <button data-export="copyImage">📋 Copy Image to Clipboard</button>
               <button data-export="css">CSS Variables</button>
               <button data-export="scss">SCSS Variables</button>
               <button data-export="tailwind">Tailwind Config</button>
@@ -207,11 +228,12 @@
               <button data-export="text">Text File</button>
               <button data-export="tokens">Design Tokens (JSON)</button>
               <button data-export="figma">Figma Variables (JSON)</button>
+              <button data-export="materialScale">50–900 Shade Scale (from swatch 1)</button>
             </div>
           </div>
         </div>
 
-        <p class="hint">Click a swatch's hex to copy it · click the lock to keep a color when regenerating · click the color chip to fine‑tune it.</p>
+        <p class="hint">Click a swatch's hex to copy it · click the lock to keep a color when regenerating · click the color chip to fine‑tune it · ← → browses your last few generated palettes.</p>
 
         <div class="control-card" id="brandKitCard">
           <label class="control-label control-label-row"><span>🔒 Brand Kit mode</span>
@@ -222,6 +244,7 @@
         </div>
 
         <div id="paletteSwatches" class="palette-swatches"></div>
+        <div id="paletteCvdWarning" class="cvd-warning" hidden></div>
 
         <div class="saved-section">
           <h3 class="saved-title">Saved Palettes</h3>
@@ -254,6 +277,8 @@
                 <option value="1080x1080">⭐ Square (1080×1080)</option>
               </select>
               <button id="btnDownloadMeshPng" class="btn">⬇ PNG</button>
+              <button id="btnCopyMeshImage" class="btn btn-sm" title="Copy image to clipboard">📋 Copy Image</button>
+              <button id="btnPromoteMeshToWallpaper" class="btn">🖼 Send to Wallpaper</button>
             </div>
             <pre id="meshCssOutput" class="css-output" title="Click to copy"></pre>
           </div>
@@ -269,6 +294,21 @@
               <input type="color" id="meshBaseColorInput" value="#0f1020">
               <span id="meshBaseColorHex" class="stop-pos-value">#0F1020</span>
             </div>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label">Layout</label>
+            <select id="meshFamilySelect" class="select">
+              <option value="scatter">Scatter</option>
+              <option value="layeredWaves">Layered Waves</option>
+              <option value="radialBurst">Radial Burst</option>
+              <option value="gridScatter">Grid</option>
+              <option value="spiral">Spiral</option>
+              <option value="symmetric">Symmetric</option>
+              <option value="corners">Corners</option>
+              <option value="concentricRings">Rings</option>
+            </select>
+            <p class="hint">How the blobs are arranged when you hit Randomize — try a few, each gives a very different feel.</p>
           </div>
 
           <div class="control-card">
@@ -340,6 +380,7 @@
                 <option value="7680x2160">⭐ Dual 4K Monitor (7680×2160)</option>
               </select>
               <button id="btnDownloadWallpaperPng" class="btn">⬇ PNG</button>
+              <button id="btnCopyWallpaperImage" class="btn btn-sm" title="Copy image to clipboard">📋 Copy Image</button>
               <button id="btnSetAsWallpaper" class="btn" hidden>🖼 Set as Wallpaper</button>
               <button id="btnRecordWallpaper" class="btn">🎬 Record Video (6s)</button>
               <button id="btnDownloadWallpaperHtml" class="btn">📄 Live HTML File</button>
@@ -376,6 +417,12 @@
             </div>
             <div id="wallpaperColorsList" class="wallpaper-colors-list"></div>
             <button id="btnRandomWallpaperColors" class="btn btn-primary wallpaper-randomize-btn">🎲 Randomize Colors</button>
+            <div class="seed-row">
+              <span class="hint" style="margin:0;">Seed</span>
+              <input type="text" id="wallpaperSeedInput" class="text-input" placeholder="auto" title="Type a seed and hit Enter to reproduce an exact set of random colors">
+              <button id="btnCopySeed" class="btn btn-sm" title="Copy this seed">📋</button>
+            </div>
+            <p class="hint">Randomize sets a new seed automatically — copy it to get back to this exact result later, or type one in and press Enter.</p>
           </div>
 
           <div class="control-card">
@@ -417,6 +464,26 @@
             </label>
             <p class="hint">Crushes near-black shadows to pure black in PNG/wallpaper exports — saves real battery on OLED phone screens.</p>
           </div>
+
+          <div class="control-card">
+            <label class="control-label control-label-row"><span>Loop-perfect</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperLoopPerfectToggle"><span></span></label>
+            </label>
+            <p class="hint">Makes Record Video and the Live HTML File loop with no visible jump cut, instead of just cutting off wherever the clock runs out.</p>
+            <label class="control-label-row" id="wallpaperLoopLengthRow" hidden><span>Loop length</span><span id="wallpaperLoopLengthValue" class="control-value">6s</span></label>
+            <input type="range" id="wallpaperLoopLengthSlider" min="2" max="12" value="6" class="slider" hidden>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label">Recipe</label>
+            <p class="hint" style="margin-top:-4px;">Save the pattern, colors, and effects as a small file, or load one back in — handy for reusing a look across sessions.</p>
+            <div class="preview-actions">
+              <button id="btnExportWallpaperRecipe" class="btn btn-sm">⬇ Save Recipe</button>
+              <button id="btnImportWallpaperRecipe" class="btn btn-sm">⬆ Load Recipe</button>
+              <input type="file" id="wallpaperRecipeFileInput" accept="application/json" hidden>
+            </div>
+            <button id="btnExtractPaletteFromWallpaper" class="btn btn-sm" style="margin-top:8px;">🎨 Extract Palette from This</button>
+          </div>
         </div>
       </div>
     </section>
@@ -435,11 +502,24 @@
           <img id="imagePreview" alt="Uploaded image preview">
         </div>
 
+        <div id="imageMoodBadge" class="mood-badge" hidden></div>
         <div id="extractedPalette" class="palette-swatches"></div>
 
         <div class="image-actions" id="imageActions" hidden>
           <button id="btnSendToPalette" class="btn btn-primary">Send to Palette Studio →</button>
+          <button id="btnCompareExtractions" class="btn" hidden>⇄ Compare with previous image</button>
           <button id="btnAnotherImage" class="btn">Choose another image</button>
+        </div>
+
+        <div id="imageDiffSection" class="image-diff" hidden>
+          <div class="image-diff-row">
+            <span class="image-diff-label">Previous <span id="imageDiffMoodA" class="mood-badge mood-badge-inline"></span></span>
+            <div id="imageDiffPaletteA" class="palette-swatches palette-swatches-compact"></div>
+          </div>
+          <div class="image-diff-row">
+            <span class="image-diff-label">Current <span id="imageDiffMoodB" class="mood-badge mood-badge-inline"></span></span>
+            <div id="imageDiffPaletteB" class="palette-swatches palette-swatches-compact"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -451,6 +531,7 @@
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="offlineIndicator" class="offline-indicator" hidden>📡 Offline — showing the last saved version of the app</div>
 <canvas id="exportCanvas" style="display:none"></canvas>
 
 <div id="fullscreenOverlay" class="fullscreen-overlay">

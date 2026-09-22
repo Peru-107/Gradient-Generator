@@ -323,6 +323,27 @@ function downloadCanvasPng(canvas, filename) {
   canvas.toBlob(blob => saveFile(blob, filename, 'image/png'), 'image/png');
 }
 
+/* Copies the canvas straight to the system clipboard as a PNG, for
+   pasting directly into a chat app or doc instead of only ever being
+   able to save a file and attach it separately. Needs the async
+   Clipboard API + ClipboardItem, both broadly supported in
+   Chrome/Edge/Safari but not universal, so this fails soft with a
+   toast rather than throwing when unavailable (e.g. some in-app
+   Android WebViews). */
+async function copyCanvasToClipboard(canvas) {
+  if (!navigator.clipboard || typeof window.ClipboardItem === 'undefined') {
+    showToast('Copying images isn’t supported in this browser — try Download instead');
+    return;
+  }
+  try {
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
+    showToast('Image copied to clipboard');
+  } catch (e) {
+    showToast('Could not copy image — try Download instead');
+  }
+}
+
 /* ==========================================================================
    Tabs
    ========================================================================== */
@@ -353,11 +374,21 @@ function setActiveTab(tab) {
 const themeToggle = document.getElementById('themeToggle');
 const themeMenu = document.getElementById('themeMenu');
 const THEME_NAMES = ['light', 'dark', 'aurora', 'bento', 'editorial', 'neon'];
-const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀', bento: '◧', editorial: '—', neon: '⌁' };
+const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀', bento: '◧', editorial: '—', neon: '⌁', system: '🖥' };
 const THEME_LABEL = {
   light: 'Light', dark: 'Dark', aurora: 'Aurora Bento',
   bento: 'Bento Studio', editorial: 'Soft Editorial', neon: 'Neon Console',
+  system: 'Match System',
 };
+/* "system" isn't a real paintable theme like the six above — it's a mode
+   that keeps resolving to whichever of light/dark the OS is currently
+   set to, live, independent of the app's own picker. Kept separate from
+   THEME_NAMES since it's never itself a value for data-theme. */
+const SYSTEM_THEME_QUERY = window.matchMedia('(prefers-color-scheme: dark)');
+function resolveSystemTheme() {
+  return SYSTEM_THEME_QUERY.matches ? 'dark' : 'light';
+}
+let currentThemeMode = 'light';
 /* Aurora Bento and the three newer looks are Pro-only. isProUnlocked()
    itself lives further down this file (with the rest of the license
    system), but this check is just a bare localStorage read, so it's safe
@@ -379,32 +410,38 @@ function syncNativeStatusBar(theme) {
 }
 
 function refreshThemeMenuUI() {
-  const current = document.documentElement.getAttribute('data-theme');
   themeMenu.querySelectorAll('button[data-theme-choice]').forEach(btn => {
     const t = btn.dataset.themeChoice;
-    btn.classList.toggle('active', t === current);
+    btn.classList.toggle('active', t === currentThemeMode);
     const proTag = btn.querySelector('.theme-pro-tag');
     if (proTag) proTag.hidden = !PRO_THEMES.has(t) || isThemeUnlocked(t);
   });
 }
 
 function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
+  currentThemeMode = theme;
+  const resolved = theme === 'system' ? resolveSystemTheme() : theme;
+  document.documentElement.setAttribute('data-theme', resolved);
   themeToggle.textContent = THEME_ICON[theme] || '🌙';
   themeToggle.title = 'Choose theme (' + (THEME_LABEL[theme] || theme) + ')';
   localStorage.setItem('gradii_theme', theme);
-  syncNativeStatusBar(theme);
+  syncNativeStatusBar(resolved);
   refreshThemeMenuUI();
   /* Deferred: on first load this can fire before gradientState/meshState/
      etc. (declared later in this file) have been initialized. */
-  if (theme === 'aurora') setTimeout(updateAuroraBackdrop, 0);
+  if (resolved === 'aurora') setTimeout(updateAuroraBackdrop, 0);
 }
+/* Live-follows the OS setting while in "system" mode — without this,
+   picking Match System would only ever apply once, at whatever the OS
+   preference happened to be right then, instead of actually tracking it. */
+SYSTEM_THEME_QUERY.addEventListener('change', () => {
+  if (currentThemeMode === 'system') applyTheme('system');
+});
 (function initTheme() {
   const saved = localStorage.getItem('gradii_theme');
-  let preferred = THEME_NAMES.includes(saved)
-    ? saved
-    : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  if (!isThemeUnlocked(preferred)) preferred = 'dark';
+  let preferred = (saved === 'system' || THEME_NAMES.includes(saved)) ? saved : 'system';
+  const resolvedCheck = preferred === 'system' ? resolveSystemTheme() : preferred;
+  if (!isThemeUnlocked(resolvedCheck)) preferred = 'dark';
   applyTheme(preferred);
 })();
 themeToggle.addEventListener('click', (e) => {
@@ -504,34 +541,40 @@ visionSelect.addEventListener('change', () => {
    GRADIENT STUDIO
    ========================================================================== */
 
+/* tag powers the mood/tag filter above the presets grid — purely a
+   browsing aid, never part of gradientState, since it doesn't change
+   the gradient itself, only which presets are currently shown. */
 const GRADIENT_PRESETS = [
-  { name: 'Sunset', stops: ['#ff512f', '#f09819'], angle: 120 },
-  { name: 'Ocean', stops: ['#2193b0', '#6dd5ed'], angle: 135 },
-  { name: 'Candy', stops: ['#ff9a9e', '#fecfef'], angle: 135 },
-  { name: 'Mojito', stops: ['#1d976c', '#93f9b9'], angle: 120 },
-  { name: 'Instagram', stops: ['#833ab4', '#fd1d1d', '#fcb045'], angle: 135 },
-  { name: 'Cosmic', stops: ['#ff00cc', '#333399'], angle: 110 },
-  { name: 'Peach', stops: ['#ed4264', '#ffedbc'], angle: 135 },
-  { name: 'Midnight City', stops: ['#232526', '#414345'], angle: 135 },
-  { name: 'Aqua Marine', stops: ['#1a2980', '#26d0ce'], angle: 135 },
-  { name: 'Grape', stops: ['#8e2de2', '#4a00e0'], angle: 135 },
-  { name: 'Lush', stops: ['#56ab2f', '#a8e063'], angle: 120 },
-  { name: 'Fire', stops: ['#f12711', '#f5af19'], angle: 135 },
-  { name: 'Royal', stops: ['#141e30', '#243b55'], angle: 135 },
-  { name: 'Bloom', stops: ['#dd5e89', '#f7bb97'], angle: 120 },
-  { name: 'Emerald', stops: ['#43cea2', '#185a9d'], angle: 135 },
-  { name: 'Cherry', stops: ['#eb3349', '#f45c43'], angle: 135 },
-  { name: 'Sky', stops: ['#00c6ff', '#0072ff'], angle: 135 },
-  { name: 'Flamingo', stops: ['#f78ca0', '#f9748f', '#fd868c', '#fe9a8b'], angle: 135 },
-  { name: 'Rose Gold', stops: ['#b76e79', '#f6d9d3'], angle: 135 },
-  { name: 'Cotton Candy', stops: ['#a18cd1', '#fbc2eb'], angle: 135 },
-  { name: 'Lime', stops: ['#a8ff78', '#78ffd6'], angle: 120 },
-  { name: 'Blush', stops: ['#ff9a9e', '#fad0c4', '#fbc2eb'], angle: 135 },
-  { name: 'Nebula', stops: ['#654ea3', '#eaafc8'], angle: 130 },
-  { name: 'Amber', stops: ['#f7971e', '#ffd200'], angle: 120 },
-  { name: 'Deep Sea', type: 'radial', stops: ['#000428', '#004e92'] },
-  { name: 'Solar Flare', type: 'conic', stops: ['#ff512f', '#f09819', '#ff512f'], angle: 0 },
+  { name: 'Sunset', stops: ['#ff512f', '#f09819'], angle: 120, tag: 'warm' },
+  { name: 'Ocean', stops: ['#2193b0', '#6dd5ed'], angle: 135, tag: 'cool' },
+  { name: 'Candy', stops: ['#ff9a9e', '#fecfef'], angle: 135, tag: 'pastel' },
+  { name: 'Mojito', stops: ['#1d976c', '#93f9b9'], angle: 120, tag: 'vibrant' },
+  { name: 'Instagram', stops: ['#833ab4', '#fd1d1d', '#fcb045'], angle: 135, tag: 'neon' },
+  { name: 'Cosmic', stops: ['#ff00cc', '#333399'], angle: 110, tag: 'neon' },
+  { name: 'Peach', stops: ['#ed4264', '#ffedbc'], angle: 135, tag: 'pastel' },
+  { name: 'Midnight City', stops: ['#232526', '#414345'], angle: 135, tag: 'dark' },
+  { name: 'Aqua Marine', stops: ['#1a2980', '#26d0ce'], angle: 135, tag: 'cool' },
+  { name: 'Grape', stops: ['#8e2de2', '#4a00e0'], angle: 135, tag: 'vibrant' },
+  { name: 'Lush', stops: ['#56ab2f', '#a8e063'], angle: 120, tag: 'vibrant' },
+  { name: 'Fire', stops: ['#f12711', '#f5af19'], angle: 135, tag: 'warm' },
+  { name: 'Royal', stops: ['#141e30', '#243b55'], angle: 135, tag: 'dark' },
+  { name: 'Bloom', stops: ['#dd5e89', '#f7bb97'], angle: 120, tag: 'pastel' },
+  { name: 'Emerald', stops: ['#43cea2', '#185a9d'], angle: 135, tag: 'cool' },
+  { name: 'Cherry', stops: ['#eb3349', '#f45c43'], angle: 135, tag: 'warm' },
+  { name: 'Sky', stops: ['#00c6ff', '#0072ff'], angle: 135, tag: 'cool' },
+  { name: 'Flamingo', stops: ['#f78ca0', '#f9748f', '#fd868c', '#fe9a8b'], angle: 135, tag: 'pastel' },
+  { name: 'Rose Gold', stops: ['#b76e79', '#f6d9d3'], angle: 135, tag: 'pastel' },
+  { name: 'Cotton Candy', stops: ['#a18cd1', '#fbc2eb'], angle: 135, tag: 'pastel' },
+  { name: 'Lime', stops: ['#a8ff78', '#78ffd6'], angle: 120, tag: 'vibrant' },
+  { name: 'Blush', stops: ['#ff9a9e', '#fad0c4', '#fbc2eb'], angle: 135, tag: 'pastel' },
+  { name: 'Nebula', stops: ['#654ea3', '#eaafc8'], angle: 130, tag: 'vibrant' },
+  { name: 'Amber', stops: ['#f7971e', '#ffd200'], angle: 120, tag: 'warm' },
+  { name: 'Deep Sea', type: 'radial', stops: ['#000428', '#004e92'], tag: 'dark' },
+  { name: 'Solar Flare', type: 'conic', stops: ['#ff512f', '#f09819', '#ff512f'], angle: 0, tag: 'warm' },
 ];
+
+const GRADIENT_PRESET_TAGS = ['all', 'warm', 'cool', 'pastel', 'neon', 'dark', 'vibrant'];
+let gradientPresetFilter = 'all';
 
 let gradientState = {
   type: 'linear',
@@ -540,6 +583,9 @@ let gradientState = {
   posX: 50,
   posY: 50,
   oklch: false,
+  temperature: 0,
+  repeat: 1,
+  dither: false,
   stops: [
     { color: '#6d5dfc', pos: 0 },
     { color: '#ff6b9d', pos: 100 },
@@ -579,12 +625,41 @@ function expandStopsOklch(stops, enabled) {
   return out;
 }
 
+/* A non-destructive tint layered on top of the stop colors at render
+   time — the stored stop colors never change, so dragging the slider
+   back to 0 always exactly restores what you picked. temp ranges -50
+   (cool) to +50 (warm); each stop's hue is blended partway toward a
+   warm orange or cool blue target hue, scaled by how far the slider is
+   pushed. */
+function applyTemperatureShift(stops, temp) {
+  if (!temp) return stops;
+  const targetHue = temp > 0 ? 40 : 220;
+  const strength = Math.min(1, Math.abs(temp) / 50) * 0.5;
+  return stops.map(s => {
+    const { h, s: sat, l } = hexToHsl(s.color);
+    let dh = targetHue - h;
+    if (dh > 180) dh -= 360;
+    if (dh < -180) dh += 360;
+    const newHue = (h + dh * strength + 360) % 360;
+    return { ...s, color: hslToHex(newHue, sat, l) };
+  });
+}
+
+function getRenderStops(state) {
+  let stops = expandStopsOklch([...state.stops].sort((a, b) => a.pos - b.pos), state.oklch);
+  stops = applyTemperatureShift(stops, state.temperature || 0);
+  return stops;
+}
+
 function buildGradientCss(state) {
-  const stops = expandStopsOklch([...state.stops].sort((a, b) => a.pos - b.pos), state.oklch);
-  const stopsStr = stops.map(s => `${s.color} ${Math.round(s.pos)}%`).join(', ');
-  if (state.type === 'linear') return `linear-gradient(${state.angle}deg, ${stopsStr})`;
-  if (state.type === 'radial') return `radial-gradient(${state.shape} at ${state.posX}% ${state.posY}%, ${stopsStr})`;
-  return `conic-gradient(from ${state.angle}deg at ${state.posX}% ${state.posY}%, ${stopsStr})`;
+  const stops = getRenderStops(state);
+  const repeat = clamp(state.repeat || 1, 1, 6);
+  const renderStops = repeat > 1 ? stops.map(s => ({ ...s, pos: s.pos / repeat })) : stops;
+  const stopsStr = renderStops.map(s => `${s.color} ${(Math.round(s.pos * 100) / 100)}%`).join(', ');
+  const prefix = repeat > 1 ? 'repeating-' : '';
+  if (state.type === 'linear') return `${prefix}linear-gradient(${state.angle}deg, ${stopsStr})`;
+  if (state.type === 'radial') return `${prefix}radial-gradient(${state.shape} at ${state.posX}% ${state.posY}%, ${stopsStr})`;
+  return `${prefix}conic-gradient(from ${state.angle}deg at ${state.posX}% ${state.posY}%, ${stopsStr})`;
 }
 
 function renderGradientPreview() {
@@ -697,6 +772,14 @@ function syncGradientControlsFromState() {
     b.classList.toggle('active', b.dataset.type === gradientState.type));
   document.querySelectorAll('#shapeSeg .seg-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.shape === gradientState.shape));
+  document.getElementById('gradientOklchToggle').checked = !!gradientState.oklch;
+  document.getElementById('gradientDitherToggle').checked = !!gradientState.dither;
+  const temp = gradientState.temperature || 0;
+  document.getElementById('gradientTempSlider').value = temp;
+  document.getElementById('gradientTempValue').textContent = temp > 0 ? `+${temp}` : `${temp}`;
+  const repeat = gradientState.repeat || 1;
+  document.getElementById('gradientRepeatSlider').value = repeat;
+  document.getElementById('gradientRepeatValue').textContent = `${repeat}×`;
   renderControlVisibility();
 }
 
@@ -737,9 +820,29 @@ document.getElementById('btnRandomGradient').addEventListener('click', randomize
 document.getElementById('btnCopyCss').addEventListener('click', () => copyText(cssOutput.textContent, 'CSS copied'));
 cssOutput.addEventListener('click', () => copyText(cssOutput.textContent, 'CSS copied'));
 
+function renderPresetTagFilter() {
+  const container = document.getElementById('presetTagFilter');
+  if (!container) return;
+  container.innerHTML = '';
+  GRADIENT_PRESET_TAGS.forEach(tag => {
+    const btn = document.createElement('button');
+    btn.className = 'tag-chip' + (tag === gradientPresetFilter ? ' active' : '');
+    btn.textContent = tag === 'all' ? 'All' : tag[0].toUpperCase() + tag.slice(1);
+    btn.addEventListener('click', () => {
+      gradientPresetFilter = tag;
+      renderPresetTagFilter();
+      renderPresets();
+    });
+    container.appendChild(btn);
+  });
+}
+
 function renderPresets() {
   presetsGrid.innerHTML = '';
-  GRADIENT_PRESETS.forEach(preset => {
+  const visible = gradientPresetFilter === 'all'
+    ? GRADIENT_PRESETS
+    : GRADIENT_PRESETS.filter(p => p.tag === gradientPresetFilter);
+  visible.forEach(preset => {
     const el = document.createElement('div');
     el.className = 'preset-swatch';
     el.title = preset.name;
@@ -758,6 +861,9 @@ function renderPresets() {
         shape: 'ellipse',
         posX: 50,
         posY: 50,
+        oklch: false,
+        temperature: 0,
+        repeat: 1,
         stops: preset.stops.map((c, i) => ({ color: c, pos: Math.round((i / (preset.stops.length - 1)) * 100) })),
       };
       syncGradientControlsFromState();
@@ -784,7 +890,11 @@ function linearGradientEndpoints(w, h, angleDeg) {
 }
 
 function drawGradientToCanvas(ctx, w, h, state) {
-  const stops = expandStopsOklch([...state.stops].sort((a, b) => a.pos - b.pos), state.oklch);
+  const baseStops = getRenderStops(state);
+  const repeat = clamp(state.repeat || 1, 1, 6);
+  const stops = repeat > 1
+    ? Array.from({ length: repeat }, (_, cycle) => baseStops.map(s => ({ color: s.color, pos: (cycle * 100 + s.pos) / repeat }))).flat()
+    : baseStops;
   let grad;
   if (state.type === 'linear') {
     const { x1, y1, x2, y2 } = linearGradientEndpoints(w, h, state.angle);
@@ -816,6 +926,35 @@ function drawGradientToCanvas(ctx, w, h, state) {
   ctx.fillRect(0, 0, w, h);
 }
 
+/* Ordered (Bayer 4x4) dithering: nudges each pixel up or down by a tiny,
+   position-dependent amount before it gets rounded to an 8-bit channel
+   value. A smooth gradient's color normally steps in hard, visible bands
+   wherever two adjacent output values round to the same 8-bit level —
+   this breaks that flat step up into a fine, essentially invisible
+   speckle instead, the same trick classic image dithering uses. Export-
+   only (like the AMOLED crush): a per-pixel pass is a one-time export
+   cost, not something to repeat every animation frame. */
+const DITHER_BAYER_4X4 = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+];
+function ditherCanvas(ctx, w, h) {
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const offset = (DITHER_BAYER_4X4[y % 4][x % 4] / 16 - 0.5) * 1.4;
+      d[idx] = clamp(Math.round(d[idx] + offset), 0, 255);
+      d[idx + 1] = clamp(Math.round(d[idx + 1] + offset), 0, 255);
+      d[idx + 2] = clamp(Math.round(d[idx + 2] + offset), 0, 255);
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
 document.getElementById('btnDownloadPng').addEventListener('click', () => {
   const size = resolveExportSize(document.getElementById('gradientResolutionSelect'));
   if (!size) return;
@@ -824,9 +963,23 @@ document.getElementById('btnDownloadPng').addEventListener('click', () => {
   canvas.height = size.h;
   const ctx = canvas.getContext('2d');
   drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
+  if (gradientState.dither) ditherCanvas(ctx, canvas.width, canvas.height);
   drawWatermark(ctx, canvas.width, canvas.height);
   downloadCanvasPng(canvas, `gradient-${size.w}x${size.h}.png`);
   showToast('Gradient PNG downloaded');
+});
+
+document.getElementById('btnCopyGradientImage').addEventListener('click', () => {
+  const size = resolveExportSize(document.getElementById('gradientResolutionSelect'));
+  if (!size) return;
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = size.w;
+  canvas.height = size.h;
+  const ctx = canvas.getContext('2d');
+  drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
+  if (gradientState.dither) ditherCanvas(ctx, canvas.width, canvas.height);
+  drawWatermark(ctx, canvas.width, canvas.height);
+  copyCanvasToClipboard(canvas);
 });
 
 const gradientExportMenu = document.getElementById('gradientExportMenu');
@@ -972,10 +1125,28 @@ function ensurePaletteArrays() {
   paletteState.locked = paletteState.locked.slice(0, paletteState.count);
 }
 
+let paletteHistory = [];
+let paletteHistoryIndex = -1;
+function pushPaletteHistory() {
+  paletteHistory = paletteHistory.slice(0, paletteHistoryIndex + 1);
+  paletteHistory.push({ colors: [...paletteState.colors], locked: [...paletteState.locked] });
+  if (paletteHistory.length > 30) paletteHistory.shift();
+  paletteHistoryIndex = paletteHistory.length - 1;
+}
+function loadPaletteHistory(index) {
+  const entry = paletteHistory[index];
+  if (!entry) return;
+  paletteHistoryIndex = index;
+  paletteState.colors = [...entry.colors];
+  paletteState.locked = [...entry.locked];
+  renderPaletteSwatches();
+}
+
 function generatePalette() {
   ensurePaletteArrays();
   paletteState.colors = generatePaletteColors(paletteState.harmony, paletteState.count, paletteState.colors, paletteState.locked);
   renderPaletteSwatches();
+  pushPaletteHistory();
   quirkyBounce(paletteSwatchesEl);
 }
 
@@ -1037,6 +1208,64 @@ function renderPaletteSwatches() {
     paletteSwatchesEl.appendChild(el);
   });
   staggerIn(paletteSwatchesEl);
+  renderPaletteCvdWarning();
+}
+
+/* Same simplified simulation matrices already used for the app-wide CVD
+   preview filters (index.html's #filter-protanopia etc.) — reused here
+   in JS so "does this look different under X" can be computed as a
+   number instead of only judged by eye. */
+const CVD_MATRICES = {
+  protanopia: [0.567, 0.433, 0, 0.558, 0.442, 0, 0, 0.242, 0.758],
+  deuteranopia: [0.625, 0.375, 0, 0.7, 0.3, 0, 0, 0.3, 0.7],
+  tritanopia: [0.95, 0.05, 0, 0, 0.433, 0.567, 0, 0.475, 0.525],
+};
+function simulateCvdHex(hex, type) {
+  const { r, g, b } = hexToRgb(hex);
+  if (type === 'achromatopsia') {
+    const gray = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    return rgbToHex(gray, gray, gray);
+  }
+  const m = CVD_MATRICES[type];
+  if (!m) return hex;
+  return rgbToHex(
+    clamp(Math.round(m[0] * r + m[1] * g + m[2] * b), 0, 255),
+    clamp(Math.round(m[3] * r + m[4] * g + m[5] * b), 0, 255),
+    clamp(Math.round(m[6] * r + m[7] * g + m[8] * b), 0, 255)
+  );
+}
+function oklabDistance(hexA, hexB) {
+  const a = hexToOklab(hexA), b = hexToOklab(hexB);
+  return Math.sqrt((a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2);
+}
+const CVD_LABELS = { protanopia: 'protanopia', deuteranopia: 'deuteranopia', tritanopia: 'tritanopia', achromatopsia: 'achromatopsia' };
+const CVD_COLLISION_THRESHOLD = 0.06;
+
+/* Flags (never blocks) swatch pairs that land close enough together
+   under a simulated color-vision deficiency that they'd be hard to
+   tell apart — distance measured in OKLab on the *simulated* colors,
+   not the originals, since two colors can look distinct normally but
+   collapse toward each other once a CVD type removes part of their
+   difference. */
+function renderPaletteCvdWarning() {
+  const box = document.getElementById('paletteCvdWarning');
+  const colors = paletteState.colors;
+  const messages = [];
+  for (let i = 0; i < colors.length; i++) {
+    for (let j = i + 1; j < colors.length; j++) {
+      const hitTypes = Object.keys(CVD_MATRICES).concat('achromatopsia').filter(type => {
+        const simA = simulateCvdHex(colors[i], type);
+        const simB = simulateCvdHex(colors[j], type);
+        return oklabDistance(simA, simB) < CVD_COLLISION_THRESHOLD;
+      });
+      if (hitTypes.length) {
+        messages.push(`Colors ${i + 1} & ${j + 1} look very similar under ${hitTypes.map(t => CVD_LABELS[t]).join(', ')}`);
+      }
+    }
+  }
+  if (!messages.length) { box.hidden = true; box.textContent = ''; return; }
+  box.hidden = false;
+  box.innerHTML = `⚠ ${messages.join(' · ')}`;
 }
 
 paletteCountSlider.addEventListener('input', () => {
@@ -1146,6 +1375,25 @@ function exportPaletteAsPng(colors) {
   downloadCanvasPng(canvas, 'palette.png');
 }
 
+function copyPaletteImageToClipboard(colors) {
+  const canvas = document.getElementById('exportCanvas');
+  const w = 1200, h = 360;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const swatchW = w / colors.length;
+  colors.forEach((color, i) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(i * swatchW, 0, swatchW, h);
+    ctx.fillStyle = bestTextColor(color);
+    ctx.font = '600 22px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(color.toUpperCase(), i * swatchW + swatchW / 2, h - 30);
+  });
+  drawWatermark(ctx, w, h);
+  copyCanvasToClipboard(canvas);
+}
+
 function exportPaletteAsCss(colors) {
   const vars = colors.map((c, i) => `  --color-${i + 1}: ${c};`).join('\n');
   downloadBlob(`:root {\n${vars}\n}\n`, 'palette.css', 'text/css');
@@ -1238,11 +1486,37 @@ function exportPaletteAsGpl(colors) {
   downloadBlob(lines.join('\n') + '\n', 'palette.gpl', 'text/plain');
 }
 
+/* A full 50–900 shade ramp generated from a single base color, in the
+   naming convention Tailwind/Material use — different from the "Shades"
+   harmony (which varies a user-chosen count of stops) in that this
+   always produces the same 10 named steps, ready to paste into a design
+   system's token file. Uses OKLCH so the ramp stays a consistent hue
+   from the lightest to the darkest step, the same reasoning as the
+   Cohesive palette harmony. */
+const MATERIAL_SCALE_STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900];
+const MATERIAL_SCALE_LIGHTNESS = [0.97, 0.93, 0.86, 0.78, 0.68, 0.58, 0.48, 0.38, 0.28, 0.18];
+function generateMaterialScale(baseHex) {
+  const { C, H } = hexToOklch(baseHex);
+  const scale = {};
+  MATERIAL_SCALE_STEPS.forEach((step, i) => {
+    scale[step] = oklchToHex(MATERIAL_SCALE_LIGHTNESS[i], C, H);
+  });
+  return scale;
+}
+function exportPaletteAsMaterialScale(colors) {
+  const base = colors[0];
+  const scale = generateMaterialScale(base);
+  const jsLines = MATERIAL_SCALE_STEPS.map(step => `  ${step}: '${scale[step]}',`).join('\n');
+  const text = `// 50-900 shade scale generated from ${base.toUpperCase()}\nexport const colorScale = {\n${jsLines}\n};\n`;
+  downloadBlob(text, 'color-scale.js', 'text/javascript');
+}
+
 exportMenu.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-export]');
   if (!btn) return;
   const colors = paletteState.colors;
   if (btn.dataset.export === 'png') exportPaletteAsPng(colors);
+  if (btn.dataset.export === 'copyImage') { copyPaletteImageToClipboard(colors); exportMenu.classList.remove('open'); return; }
   if (btn.dataset.export === 'css') exportPaletteAsCss(colors);
   if (btn.dataset.export === 'scss') exportPaletteAsScss(colors);
   if (btn.dataset.export === 'tailwind') exportPaletteAsTailwind(colors);
@@ -1252,6 +1526,7 @@ exportMenu.addEventListener('click', (e) => {
   if (btn.dataset.export === 'text') exportPaletteAsText(colors);
   if (btn.dataset.export === 'tokens') exportPaletteAsTokens(colors);
   if (btn.dataset.export === 'figma') exportPaletteAsFigmaVariables(colors);
+  if (btn.dataset.export === 'materialScale') exportPaletteAsMaterialScale(colors);
   exportMenu.classList.remove('open');
   showToast('Palette exported');
 });
@@ -1302,6 +1577,7 @@ const MESH_PRESETS = [
 let meshState = {
   baseColor: '#0f1020',
   blendMode: 'normal',
+  family: 'scatter',
   points: [],
 };
 
@@ -1324,19 +1600,153 @@ const MESH_COMPOSITE_MAP = {
   'soft-light': 'soft-light',
 };
 
-function randomMeshPoints(count) {
+function meshColorAt(baseHue, i, count, spread) {
+  const h = baseHue + (Math.random() - 0.5) * spread + (i / Math.max(1, count)) * 40;
+  return hslToHex(h, 55 + Math.random() * 35, 45 + Math.random() * 25);
+}
+
+/* Mesh generator families: each takes (count, baseHue) and returns an
+   array of {x,y,size,color} points in the same shape randomMeshPoints
+   always produced, so nothing downstream (rendering, dragging, the
+   blob list) needs to know which family built them — only how the
+   points are laid out differs. */
+const MESH_FAMILIES = {
+  /* Original behavior: pure uniform-random scatter. */
+  scatter(count, baseHue) {
+    return Array.from({ length: count }, (_, i) => ({
+      x: Math.round(Math.random() * 100),
+      y: Math.round(Math.random() * 100),
+      size: Math.round(45 + Math.random() * 35),
+      color: meshColorAt(baseHue, i, count, 160),
+    }));
+  },
+  /* Horizontal bands stacked top to bottom, each with a gentle sideways
+     wave offset — Haikei's "layered waves" look. */
+  layeredWaves(count, baseHue) {
+    return Array.from({ length: count }, (_, i) => {
+      const band = i / Math.max(1, count - 1);
+      return {
+        x: Math.round(50 + Math.sin(i * 2.4) * 30 + (Math.random() - 0.5) * 12),
+        y: Math.round(10 + band * 80),
+        size: Math.round(55 + Math.random() * 30),
+        color: meshColorAt(baseHue, i, count, 110),
+      };
+    });
+  },
+  /* Evenly spaced around a circle, like rays bursting from the center. */
+  radialBurst(count, baseHue) {
+    return Array.from({ length: count }, (_, i) => {
+      const angle = (i / count) * Math.PI * 2;
+      const radius = 30 + Math.random() * 20;
+      return {
+        x: Math.round(50 + Math.cos(angle) * radius),
+        y: Math.round(50 + Math.sin(angle) * radius),
+        size: Math.round(35 + Math.random() * 25),
+        color: meshColorAt(baseHue, i, count, 140),
+      };
+    });
+  },
+  /* A jittered grid — good even coverage, no empty corners or crowded
+     centers the way pure random scatter can produce. */
+  gridScatter(count, baseHue) {
+    const cols = Math.ceil(Math.sqrt(count));
+    const rows = Math.ceil(count / cols);
+    return Array.from({ length: count }, (_, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      const cellW = 100 / cols, cellH = 100 / rows;
+      return {
+        x: Math.round(clamp(cellW * (col + 0.5) + (Math.random() - 0.5) * cellW * 0.7, 5, 95)),
+        y: Math.round(clamp(cellH * (row + 0.5) + (Math.random() - 0.5) * cellH * 0.7, 5, 95)),
+        size: Math.round(45 + Math.random() * 30),
+        color: meshColorAt(baseHue, i, count, 130),
+      };
+    });
+  },
+  /* Golden-angle spiral (sunflower-seed packing) out from the center —
+     naturally even spacing with no two points ever landing too close. */
+  spiral(count, baseHue) {
+    const goldenAngle = 137.508 * (Math.PI / 180);
+    return Array.from({ length: count }, (_, i) => {
+      const radius = 45 * Math.sqrt((i + 0.5) / count);
+      const angle = i * goldenAngle;
+      return {
+        x: Math.round(clamp(50 + Math.cos(angle) * radius, 3, 97)),
+        y: Math.round(clamp(50 + Math.sin(angle) * radius, 3, 97)),
+        size: Math.round(40 + Math.random() * 30),
+        color: meshColorAt(baseHue, i, count, 150),
+      };
+    });
+  },
+  /* Half the points placed randomly, the other half mirrored across the
+     vertical center line — a symmetric, kaleidoscope-like composition. */
+  symmetric(count, baseHue) {
+    const half = Math.ceil(count / 2);
+    const points = [];
+    for (let i = 0; i < half; i++) {
+      const x = Math.round(5 + Math.random() * 45);
+      const y = Math.round(Math.random() * 100);
+      const size = Math.round(45 + Math.random() * 35);
+      const color = meshColorAt(baseHue, i, count, 130);
+      points.push({ x, y, size, color });
+      if (points.length < count) points.push({ x: 100 - x, y, size, color });
+    }
+    return points.slice(0, count);
+  },
+  /* Points biased toward the four corners/edges — leaves the center
+     calmer, useful for a wallpaper that needs a clear middle for icons
+     or a subject. */
+  corners(count, baseHue) {
+    const anchors = [[10, 10], [90, 10], [10, 90], [90, 90], [50, 5], [50, 95]];
+    return Array.from({ length: count }, (_, i) => {
+      const [ax, ay] = anchors[i % anchors.length];
+      return {
+        x: Math.round(clamp(ax + (Math.random() - 0.5) * 24, 2, 98)),
+        y: Math.round(clamp(ay + (Math.random() - 0.5) * 24, 2, 98)),
+        size: Math.round(50 + Math.random() * 35),
+        color: meshColorAt(baseHue, i, count, 140),
+      };
+    });
+  },
+  /* A handful of concentric rings around the center, points spread
+     evenly around each ring. */
+  concentricRings(count, baseHue) {
+    const rings = Math.min(3, Math.max(1, Math.ceil(count / 3)));
+    return Array.from({ length: count }, (_, i) => {
+      const ring = i % rings;
+      const radius = 12 + ring * (35 / rings);
+      const onRing = Math.floor(i / rings);
+      const perRing = Math.ceil(count / rings);
+      const angle = (onRing / perRing) * Math.PI * 2 + ring * 0.6;
+      return {
+        x: Math.round(clamp(50 + Math.cos(angle) * radius, 3, 97)),
+        y: Math.round(clamp(50 + Math.sin(angle) * radius, 3, 97)),
+        size: Math.round(40 + Math.random() * 30),
+        color: meshColorAt(baseHue, i, count, 130),
+      };
+    });
+  },
+};
+
+const MESH_FAMILY_NAMES = {
+  scatter: 'Scatter',
+  layeredWaves: 'Layered Waves',
+  radialBurst: 'Radial Burst',
+  gridScatter: 'Grid',
+  spiral: 'Spiral',
+  symmetric: 'Symmetric',
+  corners: 'Corners',
+  concentricRings: 'Rings',
+};
+
+function randomMeshPoints(count, family) {
   const baseHue = Math.random() * 360;
-  return Array.from({ length: count }, () => ({
-    x: Math.round(Math.random() * 100),
-    y: Math.round(Math.random() * 100),
-    size: Math.round(45 + Math.random() * 35),
-    color: hslToHex(baseHue + (Math.random() - 0.5) * 160, 55 + Math.random() * 35, 45 + Math.random() * 25),
-  }));
+  const fn = MESH_FAMILIES[family] || MESH_FAMILIES.scatter;
+  return fn(count, baseHue);
 }
 
 function buildMeshCssLayers(state) {
   return state.points
-    .map(p => `radial-gradient(circle at ${p.x}% ${p.y}%, ${p.color} 0%, transparent ${p.size}%)`);
+    .map(p => `radial-gradient(circle at ${p.x}% ${p.y}%, ${hexToRgba(p.color, p.opacity ?? 1)} 0%, transparent ${p.size}%)`);
 }
 
 function renderMeshPreview() {
@@ -1444,6 +1854,11 @@ function renderMeshBlobsList() {
           <input type="range" class="mesh-blob-size" min="20" max="90" value="${p.size}">
           <span class="mesh-blob-size-value">${p.size}%</span>
         </div>
+        <div class="mesh-blob-field">
+          <span>Soft</span>
+          <input type="range" class="mesh-blob-opacity" min="15" max="100" value="${Math.round((p.opacity ?? 1) * 100)}">
+          <span class="mesh-blob-opacity-value">${Math.round((p.opacity ?? 1) * 100)}%</span>
+        </div>
       </div>
       <button class="mesh-blob-remove" title="Remove blob" ${meshState.points.length <= 3 ? 'disabled' : ''}>✕</button>
     `;
@@ -1464,6 +1879,11 @@ function renderMeshBlobsList() {
     row.querySelector('.mesh-blob-size').addEventListener('input', (e) => {
       p.size = Number(e.target.value);
       row.querySelector('.mesh-blob-size-value').textContent = `${p.size}%`;
+      renderMeshPreview();
+    });
+    row.querySelector('.mesh-blob-opacity').addEventListener('input', (e) => {
+      p.opacity = Number(e.target.value) / 100;
+      row.querySelector('.mesh-blob-opacity-value').textContent = `${e.target.value}%`;
       renderMeshPreview();
     });
     row.querySelector('.mesh-blob-remove').addEventListener('click', () => {
@@ -1504,7 +1924,7 @@ function renderMeshPresets() {
 
 function randomizeMesh() {
   meshState.baseColor = randomHex();
-  meshState.points = randomMeshPoints(meshState.points.length || 5);
+  meshState.points = randomMeshPoints(meshState.points.length || 5, meshState.family);
   applyBrandKitToMesh();
   renderMeshBlobsList();
   renderMeshPreview();
@@ -1534,6 +1954,14 @@ meshBlendSelect.addEventListener('change', () => {
   renderMeshPreview();
 });
 
+const meshFamilySelect = document.getElementById('meshFamilySelect');
+meshFamilySelect.addEventListener('change', () => {
+  meshState.family = meshFamilySelect.value;
+  meshState.points = randomMeshPoints(meshState.points.length || 5, meshState.family);
+  renderMeshBlobsList();
+  renderMeshPreview();
+});
+
 document.getElementById('btnRandomMesh').addEventListener('click', randomizeMesh);
 document.getElementById('btnCopyMeshCss').addEventListener('click', () => copyText(meshCssOutput.textContent, 'CSS copied'));
 meshCssOutput.addEventListener('click', () => copyText(meshCssOutput.textContent, 'CSS copied'));
@@ -1553,7 +1981,7 @@ function drawMeshToCanvas(ctx, w, h, state) {
     const cx = w * p.x / 100, cy = h * p.y / 100;
     const r = (p.size / 100) * Math.max(w, h) * 0.8;
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-    grad.addColorStop(0, p.color);
+    grad.addColorStop(0, hexToRgba(p.color, p.opacity ?? 1));
     grad.addColorStop(1, hexToRgba(p.color, 0));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
@@ -1573,6 +2001,33 @@ document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
   drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `mesh-${w}x${h}.png`);
   showToast('Mesh gradient PNG downloaded');
+});
+
+document.getElementById('btnCopyMeshImage').addEventListener('click', () => {
+  const size = resolveExportSize(document.getElementById('meshResolutionSelect'));
+  if (!size) return;
+  const { w, h } = size;
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  drawMeshToCanvas(ctx, w, h, meshState);
+  drawWatermark(ctx, w, h);
+  copyCanvasToClipboard(canvas);
+});
+
+/* One-click "promote" this mesh into Wallpaper Studio as a Flowing Mesh
+   pattern — the base color becomes the background, the blob colors
+   become the moving color set, so a design you like here doesn't have
+   to be manually rebuilt swatch-by-swatch over there. */
+document.getElementById('btnPromoteMeshToWallpaper').addEventListener('click', () => {
+  wallpaperState.pattern = 'flowingMesh';
+  wallpaperState.colors = [meshState.baseColor, ...meshState.points.map(p => p.color)];
+  wallpaperPatternSelect.value = 'flowingMesh';
+  renderWallpaperColorsList();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  setActiveTab('wallpaper');
+  showToast('Mesh sent to Wallpaper Studio');
 });
 
 /* ==========================================================================
@@ -1849,6 +2304,9 @@ let wallpaperState = {
   live: true,
   colors: ['#0f1020', '#6d5dfc', '#ff6b9d', '#22d3c5'],
   effects: { grain: 0, vignette: 0, glow: 0, duotone: null },
+  loopPerfect: false,
+  loopSeconds: 6,
+  seed: null,
 };
 
 const wallpaperCanvas = document.getElementById('wallpaperCanvas');
@@ -1875,7 +2333,14 @@ function resizeWallpaperCanvas() {
 }
 
 function drawWallpaperFrame(t) {
-  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, t, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  /* Wrapping t modulo the loop length, rather than trying to align each
+     pattern's several different internal sin/cos frequencies, guarantees
+     an exact loop for free: since every pattern is a pure function of t,
+     if t itself repeats exactly every loopSeconds, the rendered frame at
+     t=0 is bit-for-bit the same as at t=loopSeconds — true regardless of
+     how many independent frequencies a pattern mixes internally. */
+  const useT = wallpaperState.loopPerfect ? (t % wallpaperState.loopSeconds) : t;
+  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, useT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
 }
 
 function wallpaperTick(ts) {
@@ -1957,16 +2422,48 @@ function renderWallpaperPresets() {
   staggerIn(wallpaperPresetsGrid);
 }
 
-function randomizeWallpaperColors() {
+/* Deterministic PRNG (mulberry32) so a wallpaper's "random" colors can be
+   reproduced exactly from a short seed string, instead of Math.random()
+   being gone the moment you move on. seedToInt hashes the string down to
+   the 32-bit int mulberry32 wants. */
+function seedToInt(seedStr) {
+  let h = 0;
+  for (let i = 0; i < seedStr.length; i++) h = (Math.imul(31, h) + seedStr.charCodeAt(i)) | 0;
+  return h;
+}
+function mulberry32(seed) {
+  let s = seed | 0;
+  return function () {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function syncWallpaperSeedUI() {
+  const input = document.getElementById('wallpaperSeedInput');
+  if (document.activeElement !== input) input.value = wallpaperState.seed || '';
+}
+
+function randomizeWallpaperColors(customSeed) {
+  /* Guards against this ever being wired up as a bare event listener
+     (addEventListener passes the event as the first arg) silently
+     "seeding" every click with the same non-string value — which would
+     make every randomize produce identical colors, exactly the kind of
+     bug this feature exists to let someone deliberately opt into, not
+     trigger by accident. */
+  wallpaperState.seed = (typeof customSeed === 'string' && customSeed) || Math.random().toString(36).slice(2, 8);
+  const rng = mulberry32(seedToInt(wallpaperState.seed));
   const n = wallpaperState.colors.length;
-  const baseHue = Math.random() * 360;
+  const baseHue = rng() * 360;
   wallpaperState.colors = Array.from({ length: n }, (_, i) => {
-    if (i === 0) return hslToHex(baseHue, 30 + Math.random() * 20, 8 + Math.random() * 10);
-    const h = baseHue + (Math.random() - 0.5) * 150;
-    return hslToHex(h, 55 + Math.random() * 35, 45 + Math.random() * 25);
+    if (i === 0) return hslToHex(baseHue, 30 + rng() * 20, 8 + rng() * 10);
+    const h = baseHue + (rng() - 0.5) * 150;
+    return hslToHex(h, 55 + rng() * 35, 45 + rng() * 25);
   });
   applyBrandKitToWallpaper();
   renderWallpaperColorsList();
+  syncWallpaperSeedUI();
   if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
   quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
 }
@@ -2048,6 +2545,86 @@ document.getElementById('wallpaperSafeZoneToggle').addEventListener('change', (e
   document.getElementById('wallpaperSafeZoneOverlay').hidden = !e.target.checked;
 });
 
+const wallpaperSeedInput = document.getElementById('wallpaperSeedInput');
+wallpaperSeedInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  randomizeWallpaperColors(wallpaperSeedInput.value.trim() || undefined);
+});
+document.getElementById('btnCopySeed').addEventListener('click', () => {
+  if (!wallpaperState.seed) { showToast('Randomize once first to get a seed'); return; }
+  copyText(wallpaperState.seed, 'Seed copied');
+});
+
+const wallpaperLoopPerfectToggle = document.getElementById('wallpaperLoopPerfectToggle');
+const wallpaperLoopLengthRow = document.getElementById('wallpaperLoopLengthRow');
+const wallpaperLoopLengthSlider = document.getElementById('wallpaperLoopLengthSlider');
+const wallpaperLoopLengthValue = document.getElementById('wallpaperLoopLengthValue');
+wallpaperLoopPerfectToggle.addEventListener('change', (e) => {
+  wallpaperState.loopPerfect = e.target.checked;
+  wallpaperLoopLengthRow.hidden = !e.target.checked;
+  wallpaperLoopLengthSlider.hidden = !e.target.checked;
+});
+wallpaperLoopLengthSlider.addEventListener('input', () => {
+  wallpaperState.loopSeconds = Number(wallpaperLoopLengthSlider.value);
+  wallpaperLoopLengthValue.textContent = `${wallpaperState.loopSeconds}s`;
+});
+
+document.getElementById('btnExportWallpaperRecipe').addEventListener('click', () => {
+  const recipe = {
+    kind: 'gradii-wallpaper-recipe',
+    pattern: wallpaperState.pattern,
+    colors: wallpaperState.colors,
+    speed: wallpaperState.speed,
+    effects: wallpaperState.effects,
+  };
+  downloadBlob(JSON.stringify(recipe, null, 2), 'wallpaper-recipe.json', 'application/json');
+  showToast('Recipe saved');
+});
+
+const wallpaperRecipeFileInput = document.getElementById('wallpaperRecipeFileInput');
+document.getElementById('btnImportWallpaperRecipe').addEventListener('click', () => wallpaperRecipeFileInput.click());
+wallpaperRecipeFileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const recipe = JSON.parse(await file.text());
+    if (!recipe.pattern || !Array.isArray(recipe.colors)) throw new Error('Not a wallpaper recipe file');
+    wallpaperState.pattern = recipe.pattern;
+    wallpaperState.colors = recipe.colors;
+    wallpaperState.speed = recipe.speed || 1;
+    wallpaperState.effects = recipe.effects || { grain: 0, vignette: 0, glow: 0, duotone: null };
+    wallpaperPatternSelect.value = wallpaperState.pattern;
+    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
+    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+    renderWallpaperColorsList();
+    syncWallpaperEffectsUI();
+    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+    showToast('Recipe loaded');
+  } catch (err) {
+    showToast('Could not read that recipe file');
+  }
+  wallpaperRecipeFileInput.value = '';
+});
+
+/* Reuses the same k-means-ish color-clustering approach as the Image
+   Extractor, just fed the wallpaper canvas's own pixels instead of an
+   uploaded photo — lets a wallpaper you like double as a starting
+   palette instead of picking the colors twice. */
+document.getElementById('btnExtractPaletteFromWallpaper').addEventListener('click', () => {
+  const colors = extractColorsFromCanvas(wallpaperCanvas, paletteState.count || 5);
+  if (!colors.length) { showToast('Could not read colors from the wallpaper'); return; }
+  paletteState.colors = colors;
+  paletteState.locked = colors.map(() => false);
+  paletteState.count = colors.length;
+  paletteCountSlider.value = paletteState.count;
+  paletteCountValue.textContent = paletteState.count;
+  renderPaletteSwatches();
+  pushPaletteHistory();
+  setActiveTab('palette');
+  showToast('Palette extracted from this wallpaper');
+});
+
 wallpaperModeSeg.addEventListener('click', (e) => {
   const btn = e.target.closest('.seg-btn');
   if (!btn) return;
@@ -2071,7 +2648,7 @@ document.getElementById('btnAddWallpaperColor').addEventListener('click', () => 
   if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
 });
 
-document.getElementById('btnRandomWallpaperColors').addEventListener('click', randomizeWallpaperColors);
+document.getElementById('btnRandomWallpaperColors').addEventListener('click', () => randomizeWallpaperColors());
 
 document.getElementById('btnShareWallpaper').addEventListener('click', () => {
   copyShareLink('wallpaper', wallpaperState);
@@ -2090,6 +2667,20 @@ document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () 
   drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `wallpaper-${w}x${h}.png`);
   showToast('Wallpaper PNG downloaded');
+});
+
+document.getElementById('btnCopyWallpaperImage').addEventListener('click', () => {
+  const size = resolveExportSize(wallpaperResolutionSelect);
+  if (!size) return;
+  const { w, h } = size;
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects);
+  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
+  drawWatermark(ctx, w, h);
+  copyCanvasToClipboard(canvas);
 });
 
 /* Opens Android's own "crop and set wallpaper" system UI directly, instead
@@ -2156,9 +2747,10 @@ document.getElementById('btnRecordWallpaper').addEventListener('click', () => {
     showToast('Video downloaded');
   };
 
+  const durationMs = wallpaperState.loopPerfect ? Math.round(wallpaperState.loopSeconds * 1000) : 6000;
   recorder.start();
-  showToast('Recording 6s loop…');
-  setTimeout(() => recorder.stop(), 6000);
+  showToast(wallpaperState.loopPerfect ? `Recording a perfect ${wallpaperState.loopSeconds}s loop…` : 'Recording 6s loop…');
+  setTimeout(() => recorder.stop(), durationMs);
 });
 
 /* Opt-in mic input, present only when the "Audio-reactive" toggle was on at
@@ -2201,6 +2793,8 @@ function exportWallpaperHtml() {
     colors: wallpaperState.colors,
     speed: wallpaperState.speed,
     effects: wallpaperState.effects,
+    loopPerfect: wallpaperState.loopPerfect,
+    loopSeconds: wallpaperState.loopSeconds,
   });
   const audioReactive = document.getElementById('wallpaperAudioReactive').checked;
   const html = `<!doctype html>
@@ -2232,7 +2826,8 @@ window.addEventListener('resize', resize);
 let start = null;
 function loop(ts) {
   if (start === null) start = ts;
-  const t = (ts - start) / 1000;
+  let t = (ts - start) / 1000;
+  if (wallpaperData.loopPerfect && audioLevel === 0) t = t % wallpaperData.loopSeconds;
   const speed = wallpaperData.speed * (1 + audioLevel * 2.2);
   wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed, wallpaperData.effects);
   requestAnimationFrame(loop);
@@ -2345,32 +2940,78 @@ imageInput.addEventListener('change', () => {
   if (imageInput.files[0]) handleImageFile(imageInput.files[0]);
 });
 
+/* Two words that summarize a palette's overall feel, from the average
+   lightness (bright vs. dark) and saturation (vivid vs. muted) across
+   its colors — a quick, automatic label rather than requiring someone
+   to look at 6 hex codes and judge the mood themselves. */
+function computeMoodLabel(colors) {
+  if (!colors.length) return '';
+  let totalL = 0, totalS = 0;
+  colors.forEach(hex => {
+    const { s, l } = hexToHsl(hex);
+    totalL += l; totalS += s;
+  });
+  const avgL = totalL / colors.length;
+  const avgS = totalS / colors.length;
+  const brightness = avgL > 62 ? 'Light' : avgL < 35 ? 'Dark' : 'Balanced';
+  const intensity = avgS > 55 ? 'Vibrant' : avgS < 25 ? 'Muted' : 'Soft';
+  return `${brightness} & ${intensity}`;
+}
+
+let previousExtraction = null;
+
 function handleImageFile(file) {
   const reader = new FileReader();
   reader.onload = (e) => {
     imagePreview.src = e.target.result;
     imagePreviewWrap.hidden = false;
     imagePreview.onload = () => {
+      if (extractedColors.length) previousExtraction = { colors: extractedColors, mood: computeMoodLabel(extractedColors) };
       extractedColors = extractDominantColors(imagePreview, 6);
       renderExtractedPalette();
       imageActions.hidden = false;
+      const moodBadge = document.getElementById('imageMoodBadge');
+      moodBadge.textContent = `🎨 ${computeMoodLabel(extractedColors)}`;
+      moodBadge.hidden = false;
+      const compareBtn = document.getElementById('btnCompareExtractions');
+      compareBtn.hidden = !previousExtraction;
+      document.getElementById('imageDiffSection').hidden = true;
     };
   };
   reader.readAsDataURL(file);
 }
 
-function extractDominantColors(imgEl, numColors) {
-  const maxDim = 150;
-  const scale = Math.min(1, maxDim / Math.max(imgEl.naturalWidth, imgEl.naturalHeight));
-  const w = Math.max(1, Math.round(imgEl.naturalWidth * scale));
-  const h = Math.max(1, Math.round(imgEl.naturalHeight * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(imgEl, 0, 0, w, h);
-  const { data } = ctx.getImageData(0, 0, w, h);
+function renderSwatchRow(container, colors) {
+  container.innerHTML = '';
+  colors.forEach(color => {
+    const el = document.createElement('div');
+    el.className = 'swatch';
+    el.style.background = color;
+    el.style.color = bestTextColor(color);
+    el.innerHTML = `<span class="swatch-hex" style="font-size:0.68rem;">${color.toUpperCase()}</span>`;
+    container.appendChild(el);
+  });
+}
 
+document.getElementById('btnCompareExtractions').addEventListener('click', () => {
+  if (!previousExtraction) return;
+  const section = document.getElementById('imageDiffSection');
+  section.hidden = !section.hidden;
+  if (!section.hidden) {
+    renderSwatchRow(document.getElementById('imageDiffPaletteA'), previousExtraction.colors);
+    renderSwatchRow(document.getElementById('imageDiffPaletteB'), extractedColors);
+    document.getElementById('imageDiffMoodA').textContent = previousExtraction.mood;
+    document.getElementById('imageDiffMoodB').textContent = computeMoodLabel(extractedColors);
+  }
+});
+
+/* Shared core of the color-extraction algorithm: bucket every opaque
+   pixel into a coarse RGB grid, average each bucket, then greedily pick
+   the most-populous buckets that are still far enough apart from ones
+   already picked. Used both for an uploaded photo (extractDominantColors)
+   and for reading colors straight off a generated wallpaper's own canvas
+   (extractColorsFromCanvas) — same math, different pixel source. */
+function clusterDominantColors(data, numColors) {
   const buckets = new Map();
   const shift = 4;
   for (let i = 0; i < data.length; i += 4) {
@@ -2400,6 +3041,26 @@ function extractDominantColors(imgEl, numColors) {
     i++;
   }
   return result.slice(0, numColors).map(c => rgbToHex(c.r, c.g, c.b));
+}
+
+function extractDominantColors(imgEl, numColors) {
+  const maxDim = 150;
+  const scale = Math.min(1, maxDim / Math.max(imgEl.naturalWidth, imgEl.naturalHeight));
+  const w = Math.max(1, Math.round(imgEl.naturalWidth * scale));
+  const h = Math.max(1, Math.round(imgEl.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(imgEl, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  return clusterDominantColors(data, numColors);
+}
+
+function extractColorsFromCanvas(canvas, numColors) {
+  const ctx = canvas.getContext('2d');
+  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return clusterDominantColors(data, numColors);
 }
 
 function renderExtractedPalette() {
@@ -2519,6 +3180,17 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
   });
 }
 
+/* Only surfaces when actually offline — the app still fully works from
+   the service worker's cache at that point (see sw.js), but the person
+   should know why a fresh site update or share link won't load right
+   now, rather than assuming something's just broken. */
+function updateOfflineIndicator() {
+  document.getElementById('offlineIndicator').hidden = navigator.onLine;
+}
+window.addEventListener('online', updateOfflineIndicator);
+window.addEventListener('offline', updateOfflineIndicator);
+updateOfflineIndicator();
+
 /* ==========================================================================
    Keyboard shortcuts
    ========================================================================== */
@@ -2532,6 +3204,11 @@ document.addEventListener('keydown', (e) => {
     else if (activeTab === 'gradient') randomizeGradient();
     else if (activeTab === 'mesh') randomizeMesh();
     else if (activeTab === 'wallpaper') randomizeWallpaperColors();
+  }
+  if (activeTab === 'palette' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault();
+    if (e.key === 'ArrowLeft') loadPaletteHistory(paletteHistoryIndex - 1);
+    else loadPaletteHistory(paletteHistoryIndex + 1);
   }
 });
 
@@ -2671,6 +3348,26 @@ document.getElementById('gradientOklchToggle').addEventListener('change', (e) =>
   renderGradientPreview();
 });
 
+document.getElementById('gradientDitherToggle').addEventListener('change', (e) => {
+  gradientState.dither = e.target.checked;
+});
+
+const gradientTempSlider = document.getElementById('gradientTempSlider');
+const gradientTempValue = document.getElementById('gradientTempValue');
+gradientTempSlider.addEventListener('input', () => {
+  gradientState.temperature = Number(gradientTempSlider.value);
+  gradientTempValue.textContent = gradientState.temperature > 0 ? `+${gradientState.temperature}` : `${gradientState.temperature}`;
+  renderGradientPreview();
+});
+
+const gradientRepeatSlider = document.getElementById('gradientRepeatSlider');
+const gradientRepeatValue = document.getElementById('gradientRepeatValue');
+gradientRepeatSlider.addEventListener('input', () => {
+  gradientState.repeat = Number(gradientRepeatSlider.value);
+  gradientRepeatValue.textContent = `${gradientState.repeat}×`;
+  renderGradientPreview();
+});
+
 /* ==========================================================================
    Design Tokens (W3C) + Figma Variables export
    ========================================================================== */
@@ -2801,14 +3498,16 @@ function init() {
   syncGradientControlsFromState();
   renderStopsList();
   renderGradientPreview();
+  renderPresetTagFilter();
   renderPresets();
 
   ensurePaletteArrays();
   paletteState.colors = generatePaletteColors('random', paletteState.count, [], paletteState.locked);
   renderPaletteSwatches();
+  pushPaletteHistory();
   renderSavedPalettes();
 
-  meshState.points = randomMeshPoints(5);
+  meshState.points = randomMeshPoints(5, meshState.family);
   renderMeshBlobsList();
   renderMeshPresets();
   renderMeshPreview();
