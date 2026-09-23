@@ -452,6 +452,17 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
 
 .studio { display: flex; flex-direction: column; gap: 20px; }
 
+/* The empty (no image uploaded yet) state was a small drop-zone card
+   pinned to the top of the panel with a large dead gap of empty page
+   below it before the footer — reads as broken/unfinished rather than
+   deliberate. Centering the whole studio in the available viewport
+   height fixes the empty state without affecting the uploaded state:
+   once there's a preview + extracted palette + mood badge, that content
+   is taller than min-height and just flows from the top as normal —
+   justify-content: center only has any visible effect while content is
+   shorter than the container. */
+.image-studio { min-height: min(calc(100vh - 180px), 760px); justify-content: center; }
+
 /* ---------------- shared controls ---------------- */
 .control-card {
   background: var(--bg-alt);
@@ -480,6 +491,12 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   margin-bottom: 10px;
 }
 .control-label-row .control-label { margin-bottom: 0; }
+/* Consecutive toggle rows sharing one card (a deliberate grouping, e.g.
+   "Touch & motion interactions") need real separation between them or
+   they blur into one dense wall of bold uppercase labels — most of the
+   app already gives every setting its own card; this covers the cases
+   where grouping several under one shared intro is the better call. */
+.control-label-row + .control-label-row { margin-top: 14px; }
 
 .control-value {
   font-family: var(--font-mono);
@@ -695,6 +712,17 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
 
 .preview-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* Randomize is the one action people reach for over and over while
+   scanning a design (see it, tweak it, randomize again) — everything
+   else in .export-block (copy/share/download) is a "now that I like it"
+   action that genuinely belongs after the settings. Keeping Randomize
+   in its own small row, a sibling of .preview-frame rather than nested
+   inside .export-block, is what lets the mobile reorder below give it
+   its own order value instead of getting dragged to the bottom with
+   the export controls. */
+.primary-action-row { display: flex; }
+.primary-action-row .btn { width: 100%; }
+
 .css-output {
   background: var(--bg-soft);
   border: 1px solid var(--border);
@@ -704,7 +732,11 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
   font-size: 0.82rem;
   color: var(--text);
   white-space: pre-wrap;
-  word-break: break-all;
+  /* break-all breaks anywhere, including mid-number ("68%)," splitting
+     into "6" then "8%),") — CSS declarations already have plenty of
+     natural break points at commas/spaces/parens, so overflow-wrap only
+     kicks in for a genuinely unbreakable token wider than the box. */
+  overflow-wrap: break-word;
   cursor: pointer;
   margin: 0;
 }
@@ -891,7 +923,15 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 .toolbar-group { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
 .toolbar-group .control-label { margin-bottom: 0; }
 
-.hint { color: var(--text-muted); font-size: 0.82rem; margin: -6px 0 0; }
+/* margin-bottom used to be 0, which was fine for a hint at the end of a
+   card but left zero breathing room whenever another setting followed
+   in the same card (a slider's hint running straight into the next
+   slider's label, a toggle's hint into the next toggle) — the sibling-
+   combinator fix on .control-label-row above can't catch this case
+   since a <p class="hint"> or <input class="slider"> sits between the
+   two label rows, breaking the adjacency it needs. Fixing it at the
+   hint itself covers every layout shape at once. */
+.hint { color: var(--text-muted); font-size: 0.82rem; margin: -6px 0 14px; }
 
 .dropdown { position: relative; }
 
@@ -1517,6 +1557,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
      tool on a phone (see the result, tweak it, then export it). */
   .preview-col { position: static; display: contents; }
   .preview-frame { order: 1; }
+  .primary-action-row { order: 1; }
   .controls-col { order: 2; }
   .preview-actions,
   .css-output,
