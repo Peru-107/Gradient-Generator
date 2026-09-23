@@ -526,15 +526,36 @@ document.addEventListener('click', (e) => {
    Color vision simulation
    ========================================================================== */
 
-const visionSelect = document.getElementById('visionSelect');
+const visionToggle = document.getElementById('visionToggle');
+const visionMenu = document.getElementById('visionMenu');
+const VISION_LABEL = {
+  normal: 'Normal vision', protanopia: 'Protanopia', deuteranopia: 'Deuteranopia',
+  tritanopia: 'Tritanopia', achromatopsia: 'Achromatopsia',
+};
+
+function setVision(choice) {
+  document.documentElement.setAttribute('data-vision', choice);
+  try { localStorage.setItem('gradii_vision', choice); } catch (e) { /* ignore */ }
+  visionToggle.title = choice === 'normal' ? 'Simulate color vision deficiency' : `Simulating: ${VISION_LABEL[choice]}`;
+  visionToggle.classList.toggle('vision-active', choice !== 'normal');
+  visionMenu.querySelectorAll('button[data-vision-choice]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.visionChoice === choice);
+  });
+}
 (function initVision() {
   const saved = localStorage.getItem('gradii_vision') || 'normal';
-  visionSelect.value = saved;
-  document.documentElement.setAttribute('data-vision', saved);
+  setVision(VISION_LABEL[saved] ? saved : 'normal');
 })();
-visionSelect.addEventListener('change', () => {
-  document.documentElement.setAttribute('data-vision', visionSelect.value);
-  localStorage.setItem('gradii_vision', visionSelect.value);
+visionToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  visionMenu.classList.toggle('open');
+});
+document.addEventListener('click', () => visionMenu.classList.remove('open'));
+visionMenu.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-vision-choice]');
+  if (!btn) return;
+  setVision(btn.dataset.visionChoice);
+  visionMenu.classList.remove('open');
 });
 
 /* ==========================================================================

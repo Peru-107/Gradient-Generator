@@ -429,13 +429,6 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
 
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
 
-#visionSelect {
-  padding: 8px 10px;
-  font-size: 0.8rem;
-  border-radius: 999px;
-  width: auto;
-}
-
 .icon-btn {
   width: 44px; height: 44px;
   border-radius: 50%;
@@ -449,8 +442,7 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
 }
 
 .icon-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px var(--shadow); }
-#btnEyedropperInfo { opacity: 0.55; cursor: default; }
-#btnEyedropperInfo:hover { transform: none; box-shadow: none; }
+.icon-btn.vision-active { background: var(--accent); color: #fff; border-color: transparent; }
 
 /* ---------------- panels ---------------- */
 /* Panel enter/exit transitions are driven by GSAP (see animations.js); this
@@ -752,7 +744,11 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 
 .stop-row {
   display: grid;
-  grid-template-columns: 34px 78px 1fr 40px 30px;
+  /* minmax(0, 1fr), not bare 1fr: a grid track's default minimum is
+     auto (content-based), and .stop-hex's own ~20-character intrinsic
+     width becomes that content size regardless of its width:100% —
+     same grid-blowout family as CLAUDE.md's .preset-swatch case. */
+  grid-template-columns: 34px 78px minmax(0, 1fr) 40px 30px;
   align-items: center;
   gap: 8px;
 }
@@ -768,6 +764,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 
 .stop-hex {
   width: 100%;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 0.78rem;
   padding: 7px 8px;
@@ -930,6 +927,12 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 .theme-menu { min-width: 200px; }
 .theme-menu button { display: flex; align-items: center; gap: 10px; }
 .theme-menu button.active { background: var(--bg-soft); font-weight: 700; }
+
+/* Leftmost icon in the topbar row — a right-anchored menu (the .dropdown-menu
+   default) would extend off the left edge of the screen from here, so this
+   one opens from its own left edge instead, growing rightward into the row. */
+.vision-menu { left: 0; right: auto; min-width: 180px; }
+.vision-menu button.active { background: var(--bg-soft); font-weight: 700; }
 .theme-swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; border: 1px solid var(--border); }
 .theme-swatch-light { background: #f2f3f8; }
 .theme-swatch-dark { background: #171929; }
@@ -1530,15 +1533,18 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   .tabs { justify-content: flex-start; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; min-width: 0; max-width: 100%; }
   .tabs::-webkit-scrollbar { display: none; }
   .tab-btn { padding: 10px 16px; font-size: 0.86rem; min-height: 40px; flex-shrink: 0; }
-  .topbar-actions { justify-content: center; flex-wrap: wrap; gap: 6px; }
-  .topbar-actions #visionSelect { max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* All five items here are now equal-width icon buttons (the vision
+     picker used to be a wide native <select>, which is what forced the
+     wrap this rule used to allow) — everything fits on one row down to
+     very small phone widths, so wrapping is no longer needed at all. */
+  .topbar-actions { justify-content: center; flex-wrap: nowrap; gap: 6px; }
 
   .btn { min-height: 44px; padding: 11px 16px; font-size: 0.86rem; }
   .btn-sm { min-height: 36px; padding: 8px 14px; }
   .seg-btn { min-height: 40px; }
   .icon-btn { width: 40px; height: 40px; }
 
-  .select, .stop-hex, input[type="text"], #visionSelect {
+  .select, .stop-hex, input[type="text"] {
     font-size: 16px; /* prevents iOS/Android auto-zoom on focus */
   }
 
@@ -1549,7 +1555,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   .palette-toolbar > .btn, .palette-toolbar > .dropdown { flex: 1 1 calc(50% - 6px); }
   .dropdown .btn { width: 100%; }
 
-  .stop-row { grid-template-columns: 30px 66px 1fr 30px; }
+  .stop-row { grid-template-columns: 30px 66px minmax(0, 1fr) 30px; }
   .stop-pos-value { display: none; }
   .swatch { min-height: 200px; }
 
