@@ -2912,6 +2912,30 @@ const wallpaperPresetsGrid = document.getElementById('wallpaperPresetsGrid');
 const wallpaperModeSeg = document.getElementById('wallpaperModeSeg');
 const btnWallpaperNewFrame = document.getElementById('btnWallpaperNewFrame');
 const wallpaperResolutionSelect = document.getElementById('wallpaperResolutionSelect');
+
+/* Shows exactly what "My Screen" will actually export at, including the
+   raw screen.width/height/devicePixelRatio it read — added after a
+   report that downloads weren't matching an iPad's real screen. The
+   sizing math itself checked out in testing (byte-exact PNGs per named
+   preset), so the next step is seeing the live numbers a real device
+   reports rather than guessing at browser-specific screen-API quirks
+   this sandbox can't reproduce. Read-only: never triggers the Pro
+   gate/modal the way actually exporting does. */
+function updateWallpaperResolutionHint() {
+  const hint = document.getElementById('wallpaperResolutionHint');
+  if (!hint) return;
+  if (wallpaperResolutionSelect.value === 'auto') {
+    const size = getDeviceExportSize();
+    hint.textContent = `→ ${size.w}×${size.h} (screen ${window.screen.width}×${window.screen.height}, pixel ratio ${window.devicePixelRatio || 1})`;
+  } else {
+    const [w, h] = wallpaperResolutionSelect.value.split('x');
+    hint.textContent = `→ ${w}×${h}`;
+  }
+}
+wallpaperResolutionSelect.addEventListener('change', updateWallpaperResolutionHint);
+window.addEventListener('resize', updateWallpaperResolutionHint);
+window.addEventListener('orientationchange', () => setTimeout(updateWallpaperResolutionHint, 200));
+
 const wallpaperAdvancedToggle = document.getElementById('wallpaperAdvancedToggle');
 const wallpaperAdvancedSection = document.getElementById('wallpaperAdvancedSection');
 
@@ -3011,6 +3035,7 @@ function stopWallpaperAnimation() {
 
 function activateWallpaperTab() {
   resizeWallpaperCanvas();
+  updateWallpaperResolutionHint();
   if (wallpaperState.live) startWallpaperAnimation();
   else drawWallpaperFrame(wallpaperFrozenT);
 }
@@ -5365,6 +5390,7 @@ function init() {
   renderWallpaperColorsList();
   renderWallpaperPresets();
   renderWallpaperChaptersList();
+  updateWallpaperResolutionHint();
 
   let advancedOn = false;
   try { advancedOn = isProUnlocked() && localStorage.getItem('gradii_wallpaper_advanced') === '1'; } catch (e) { /* ignore */ }
