@@ -88,9 +88,12 @@
           </div>
           <p class="hint" style="margin-top:-6px;">💡 Drag directly on the preview to set the angle (or center point) instead of using the sliders below.</p>
 
+          <div class="primary-action-row">
+            <button id="btnRandomGradient" class="btn btn-primary">🎲 Randomize</button>
+          </div>
+
           <div class="export-block">
             <div class="preview-actions">
-              <button id="btnRandomGradient" class="btn btn-primary">🎲 Randomize</button>
               <button id="btnCopyCss" class="btn">📋 Copy CSS</button>
               <button id="btnShareGradient" class="btn">🔗 Share</button>
               <button id="btnQrGradient" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
@@ -125,7 +128,9 @@
               <label class="oklch-switch"><input type="checkbox" id="gradientOklchToggle"><span></span></label>
             </label>
             <p class="hint">Avoids the muddy grey that plain gradients can pass through between two bright colors.</p>
+          </div>
 
+          <div class="control-card">
             <label class="control-label control-label-row"><span>Reduce banding</span>
               <label class="oklch-switch"><input type="checkbox" id="gradientDitherToggle"><span></span></label>
             </label>
@@ -292,9 +297,12 @@
             <div id="meshPreview" class="gradient-preview mesh-preview"></div>
             <button class="fullscreen-btn" id="btnFullscreenMesh" title="Full screen preview" aria-label="Full screen preview">⤢</button>
           </div>
+          <div class="primary-action-row">
+            <button id="btnRandomMesh" class="btn btn-primary">🎲 Randomize</button>
+          </div>
+
           <div class="export-block">
             <div class="preview-actions">
-              <button id="btnRandomMesh" class="btn btn-primary">🎲 Randomize</button>
               <button id="btnCopyMeshCss" class="btn">📋 Copy CSS</button>
               <button id="btnShareMesh" class="btn">🔗 Share</button>
               <button id="btnQrMesh" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
@@ -466,31 +474,38 @@
             </div>
 
             <div class="control-card">
-              <label class="control-label">Adaptive behavior</label>
               <label class="control-label control-label-row"><span>Real sunrise/sunset (uses location)</span>
                 <label class="oklch-switch"><input type="checkbox" id="wallpaperRealSunTimes"><span></span></label>
               </label>
-              <p class="hint" style="margin-top:-4px;">Upgrades the Time-of-day tint below from a fixed hour curve to your device's actual sunrise/sunset. Falls back to the fixed curve if location access is denied.</p>
-              <label class="control-label control-label-row"><span>Battery-aware low-power mode</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperBatteryAware"><span></span></label>
-              </label>
-              <p class="hint" style="margin-top:-4px;">Drops effects and frame rate below 20% battery. Only works where the browser reports battery level — silently does nothing elsewhere.</p>
-              <label class="control-label control-label-row"><span>Depth-layered parallax</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperDepthParallax"><span></span></label>
-              </label>
-              <p class="hint" style="margin-top:-4px;">Adds a drifting dust layer above the pattern that tilts faster than it, for real depth instead of one flat tilted image. Needs Tilt parallax (above) turned on too.</p>
+              <p class="hint">Upgrades the Time-of-day tint below from a fixed hour curve to your device's actual sunrise/sunset. Falls back to the fixed curve if location access is denied.</p>
             </div>
 
             <div class="control-card">
-              <label class="control-label">Rotation</label>
+              <label class="control-label control-label-row"><span>Battery-aware low-power mode</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperBatteryAware"><span></span></label>
+              </label>
+              <p class="hint">Drops effects and frame rate below 20% battery. Only works where the browser reports battery level — silently does nothing elsewhere.</p>
+            </div>
+
+            <div class="control-card">
+              <label class="control-label control-label-row"><span>Depth-layered parallax</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperDepthParallax"><span></span></label>
+              </label>
+              <p class="hint">Adds a drifting dust layer above the pattern that tilts faster than it, for real depth instead of one flat tilted image. Needs Tilt parallax (above) turned on too.</p>
+            </div>
+
+            <div class="control-card">
               <label class="control-label control-label-row"><span>Seasonal auto-style</span>
                 <label class="oklch-switch"><input type="checkbox" id="wallpaperSeasonalRotation"><span></span></label>
               </label>
-              <p class="hint" style="margin-top:-4px;">Switches to a season-matched style pack automatically when you open the app (Spring/Summer/Autumn/Winter). Overridden by Chapters if that's also on.</p>
+              <p class="hint">Switches to a season-matched style pack automatically when you open the app (Spring/Summer/Autumn/Winter). Overridden by Chapters if that's also on.</p>
+            </div>
+
+            <div class="control-card">
               <label class="control-label control-label-row"><span>Wallpaper of the day</span>
                 <label class="oklch-switch"><input type="checkbox" id="wallpaperOfTheDay"><span></span></label>
               </label>
-              <p class="hint" style="margin-top:-4px;">Deterministically picks one style pack per calendar day — same look all day, a new one tomorrow.</p>
+              <p class="hint">Deterministically picks one style pack per calendar day — same look all day, a new one tomorrow.</p>
             </div>
           </div>
 
@@ -547,7 +562,9 @@
               <label class="oklch-switch"><input type="checkbox" id="wallpaperSafeZoneToggle"><span></span></label>
             </label>
             <p class="hint">Shows roughly where a lock screen's clock and icons usually sit, so your best detail isn't hidden under them. Preview only — never affects exports.</p>
+          </div>
 
+          <div class="control-card">
             <label class="control-label control-label-row"><span>True-black export (AMOLED)</span>
               <label class="oklch-switch"><input type="checkbox" id="wallpaperAmoledToggle"><span></span></label>
             </label>
@@ -564,13 +581,13 @@
           </div>
 
           <div class="control-card">
-            <label class="control-label">Time &amp; motion</label>
-
             <label class="control-label control-label-row"><span>Time-of-day tint</span>
               <label class="oklch-switch"><input type="checkbox" id="wallpaperTimeOfDayToggle"><span></span></label>
             </label>
             <p class="hint">Colors drift warmer near dawn/dusk and cooler through the day, based on the viewer's own clock — live in the preview, and in the Live HTML File wherever it's played.</p>
+          </div>
 
+          <div class="control-card">
             <label class="control-label control-label-row"><span>Tilt parallax (Live HTML File)</span>
               <label class="oklch-switch"><input type="checkbox" id="wallpaperParallaxToggle"><span></span></label>
             </label>
