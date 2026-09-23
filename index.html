@@ -45,13 +45,16 @@
     </nav>
 
     <div class="topbar-actions">
-      <select id="visionSelect" class="select" title="Simulate color vision deficiency">
-        <option value="normal">👁 Normal vision</option>
-        <option value="protanopia">👁 Protanopia</option>
-        <option value="deuteranopia">👁 Deuteranopia</option>
-        <option value="tritanopia">👁 Tritanopia</option>
-        <option value="achromatopsia">👁 Achromatopsia</option>
-      </select>
+      <div class="dropdown vision-picker">
+        <button id="visionToggle" class="icon-btn" title="Simulate color vision deficiency">👁</button>
+        <div class="dropdown-menu vision-menu" id="visionMenu">
+          <button data-vision-choice="normal">Normal vision</button>
+          <button data-vision-choice="protanopia">Protanopia</button>
+          <button data-vision-choice="deuteranopia">Deuteranopia</button>
+          <button data-vision-choice="tritanopia">Tritanopia</button>
+          <button data-vision-choice="achromatopsia">Achromatopsia</button>
+        </div>
+      </div>
       <button id="btnEyedropperInfo" class="icon-btn" title="Keyboard shortcuts — customize any of them">⌨</button>
       <button id="btnOpenCommandPalette" class="icon-btn" title="Command palette (Ctrl/⌘ K) — also opens Projects">⌘</button>
       <button id="btnOpenPro" class="icon-btn pro-btn" title="Gradii Pro">⭐</button>
