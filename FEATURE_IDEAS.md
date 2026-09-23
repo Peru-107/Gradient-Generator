@@ -84,6 +84,43 @@ Only the big backend build (#49/#50) remains open.
 
 ## Phase 4 — shipped (onboarding tour, keyboard shortcut remapping — see #37/#38 above)
 
+## Phase 5 — Live Wallpaper expansion (all Pro, behind the "Advanced Mode" toggle)
+
+Everything in this section lives behind a new "⚙ Advanced Mode" toggle at
+the top of Wallpaper Studio, which itself requires Pro (same convention
+as `PRO_THEMES` in the theme menu: visible, but an unlicensed attempt
+reverts the toggle and opens the Pro modal rather than hiding that the
+feature exists). The 8 patterns disappear from the dropdown and the
+whole Advanced section hides when the toggle is off; anything already
+selected reverts to Flowing Mesh.
+
+**8 more generative patterns:**
+51. ✅ **Done** — **Starfield** — drifting depth-parallax particles, positions from a per-index hash (not `Math.random()`) so they hold still and just drift, no per-frame randomness.
+52. ✅ **Done** — **Plasma** — classic sine-interference plasma, sampled on a coarse grid (a full-resolution per-pixel loop benchmarked far too slow for 60fps) and colored by walking the wallpaper's own color stops.
+53. ✅ **Done** — **Ripple** — concentric rings expanding outward from a handful of centers, each fading as it grows.
+54. ✅ **Done** — **Voronoi Cells** — nearest-seed-color fill on a coarse grid, seeds drifting in slow orbits so cell boundaries shift instead of jumping.
+55. ✅ **Done** — **Kaleidoscope** — one wedge clipped and filled with drifting blobs, mirrored on alternating wedges and repeated via `ctx.rotate` for 8-fold symmetry.
+56. ✅ **Done** — **Cloud Drift** — layered sine waves standing in for true Perlin noise (real value noise needs a cached grid to look continuous, which no wp*-prefixed function can keep — see the self-containment note in the code); smooth and fully continuous in time on their own.
+57. ✅ **Done** — **Lava Lamp** — blobs that rise, drift sideways, and sink in a slow vertical loop (not flowingMesh's circular drift), `ctx.filter` blur applied to a box around each blob rather than the full canvas to keep the cost down.
+58. ✅ **Done** — **Moiré** — two line grids at a deliberate angle+spacing delta, screen-blended so their overlap produces real interference bands (an early pass used too small an angle delta between the grids and barely showed any beat pattern — tuned after actually looking at a render, not just reasoning about the math).
+
+**Touch & motion interactions** (only do anything in the exported Live HTML File, opened somewhere that forwards real touch/sensor events — a live-wallpaper app, or the file itself on a phone browser; never the in-app preview, same scoping as tilt parallax):
+59. ✅ **Done** — **Tap-to-ripple** — a tap spawns an expanding, fading ring at that point.
+60. ✅ **Done** — **Shake-to-randomize** — a sudden jerk in `accelerationIncludingGravity` (rate-limited to once per 1.2s) rerolls the colors, reusing the same seeded mulberry32 PRNG as the in-app Randomize Colors button.
+61. ✅ **Done** — **Double-tap to pause/resume** — shares one tap listener with Tap-to-ripple (a second tap within 300ms is the double-tap); resuming shifts the clock forward by however long it was paused so the animation doesn't jump.
+
+**Adaptive behavior:**
+62. ✅ **Done** — **Real sunrise/sunset** — upgrades the existing (fixed-hour-curve) Time-of-day tint to use actual local sunrise/sunset via a one-time geolocation fetch and a self-contained NOAA solar-calculator approximation; silently keeps the fixed curve if location is denied or unavailable.
+63. ✅ **Done** — **Battery-aware low-power mode** — feature-detected against `navigator.getBattery` (removed in most browsers over fingerprinting concerns, so this silently never engages on most devices — same graceful-degradation convention as the Shape Detection API used for Image Extract); caps the frame rate and drops grain/glow below 20% battery instead of stopping the wallpaper outright.
+64. ✅ **Done** — **Seasonal auto-style** — a deterministic month→style-pack pick, applied once when the app opens if the toggle is on. Overridden by Chapters if that's also on (least to most specific: day-of-year pick, then season, then Chapters' own deliberately-configured window).
+65. ✅ **Done** — **Wallpaper of the day** — a deterministic day-of-year hash into the style-pack list; same look all day on this device, a different one tomorrow, no server or stored "today's pick" needed.
+66. ✅ **Done** — **Depth-layered parallax** — adds a second, sparse dust-particle canvas above the main one that tilts at a stronger multiplier than tilt parallax's existing single layer — two things moving at different rates reads as real depth, one flat tilted image doesn't. Needs Tilt parallax turned on too.
+
+**Not built** (native-code-only, or too unreliable to ship as a real feature — same "scope down and say so" treatment as Chapters and the OKLCH gamut-mapping note elsewhere in this doc):
+67. **Material You / dynamic system-accent-color sync** — Android 12+'s dynamic color is a native API with no web-JS access at all; would need a custom native Kotlin Capacitor plugin, unverifiable without a physical Android 12+ device. Out of scope for a web-tech-only feature set.
+68. **Different wallpaper for lock screen vs. home screen** — needs the app to actually be a native `android.service.wallpaper.WallpaperService` distinguishing `FLAG_LOCK`/`FLAG_SYSTEM`; this app isn't one at all today (Wallpaper Studio generates/exports images and an HTML file, it doesn't register as a system wallpaper engine) — a much larger native Android undertaking than anything else built in this backlog.
+69. **Ambient light sensor** — Chrome/Android WebView's `AmbientLightSensor` API is deprecated/restricted for the same fingerprinting reasons as the Battery API and essentially never fires on real devices today; shipping a toggle for it would be dead code giving a false impression of a working feature, so it was left out rather than added as a silent no-op.
+
 ## The big one
 
 49. **Community gallery** (Supabase-backed) — browse, like, and remix other users' saved designs. The one feature here that's a real backend build, not a static-app addition — deliberately sequenced after everything else, per earlier discussion.
