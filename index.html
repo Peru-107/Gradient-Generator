@@ -423,6 +423,13 @@
         </div>
 
         <div class="controls-col">
+          <div class="control-card advanced-mode-card">
+            <label class="control-label control-label-row"><span>⚙ Advanced Mode</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperAdvancedToggle"><span></span></label>
+            </label>
+            <p class="hint" style="margin-top:-4px;">8 more live patterns, tap/shake interactions, and adaptive smart behavior (real sunrise/sunset, battery-aware, seasonal rotation, depth parallax). <strong>Pro.</strong></p>
+          </div>
+
           <div class="control-card">
             <label class="control-label">Pattern</label>
             <select id="wallpaperPatternSelect" class="select">
@@ -431,7 +438,59 @@
               <option value="radialPulse">Radial Pulse</option>
               <option value="conicSpin">Conic Spin</option>
               <option value="waveBands">Wave Bands</option>
+              <option value="starfield" class="pattern-advanced" hidden>✦ Starfield (Pro)</option>
+              <option value="plasma" class="pattern-advanced" hidden>✦ Plasma (Pro)</option>
+              <option value="ripple" class="pattern-advanced" hidden>✦ Ripple (Pro)</option>
+              <option value="voronoi" class="pattern-advanced" hidden>✦ Voronoi Cells (Pro)</option>
+              <option value="kaleidoscope" class="pattern-advanced" hidden>✦ Kaleidoscope (Pro)</option>
+              <option value="perlinClouds" class="pattern-advanced" hidden>✦ Cloud Drift (Pro)</option>
+              <option value="lavaLamp" class="pattern-advanced" hidden>✦ Lava Lamp (Pro)</option>
+              <option value="moire" class="pattern-advanced" hidden>✦ Moiré (Pro)</option>
             </select>
+          </div>
+
+          <div id="wallpaperAdvancedSection" hidden>
+            <div class="control-card">
+              <label class="control-label">Touch &amp; motion interactions</label>
+              <p class="hint" style="margin-top:-4px;">These only do anything once the Live HTML File is opened somewhere that forwards real touch/sensor events (a live-wallpaper app, or the file on a phone browser) — not in this in-app preview.</p>
+              <label class="control-label control-label-row"><span>Tap-to-ripple</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperTapRipple"><span></span></label>
+              </label>
+              <label class="control-label control-label-row"><span>Shake-to-randomize</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperShakeRandomize"><span></span></label>
+              </label>
+              <label class="control-label control-label-row"><span>Double-tap to pause/resume</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperDoubleTapPause"><span></span></label>
+              </label>
+            </div>
+
+            <div class="control-card">
+              <label class="control-label">Adaptive behavior</label>
+              <label class="control-label control-label-row"><span>Real sunrise/sunset (uses location)</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperRealSunTimes"><span></span></label>
+              </label>
+              <p class="hint" style="margin-top:-4px;">Upgrades the Time-of-day tint below from a fixed hour curve to your device's actual sunrise/sunset. Falls back to the fixed curve if location access is denied.</p>
+              <label class="control-label control-label-row"><span>Battery-aware low-power mode</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperBatteryAware"><span></span></label>
+              </label>
+              <p class="hint" style="margin-top:-4px;">Drops effects and frame rate below 20% battery. Only works where the browser reports battery level — silently does nothing elsewhere.</p>
+              <label class="control-label control-label-row"><span>Depth-layered parallax</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperDepthParallax"><span></span></label>
+              </label>
+              <p class="hint" style="margin-top:-4px;">Adds a drifting dust layer above the pattern that tilts faster than it, for real depth instead of one flat tilted image. Needs Tilt parallax (above) turned on too.</p>
+            </div>
+
+            <div class="control-card">
+              <label class="control-label">Rotation</label>
+              <label class="control-label control-label-row"><span>Seasonal auto-style</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperSeasonalRotation"><span></span></label>
+              </label>
+              <p class="hint" style="margin-top:-4px;">Switches to a season-matched style pack automatically when you open the app (Spring/Summer/Autumn/Winter). Overridden by Chapters if that's also on.</p>
+              <label class="control-label control-label-row"><span>Wallpaper of the day</span>
+                <label class="oklch-switch"><input type="checkbox" id="wallpaperOfTheDay"><span></span></label>
+              </label>
+              <p class="hint" style="margin-top:-4px;">Deterministically picks one style pack per calendar day — same look all day, a new one tomorrow.</p>
+            </div>
           </div>
 
           <div class="control-card">

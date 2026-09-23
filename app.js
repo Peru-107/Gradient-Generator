@@ -2382,6 +2382,280 @@ function wpDrawWaveBands(ctx, w, h, t, colors, speed) {
   });
 }
 
+/* Linear-interpolate two hex colors at t in [0, 1]. Self-contained (no
+   dependency on the app's general hexToHsl/hslToHex helpers) for the
+   same reason as wpHexToHsl/wpHslToHex: every wp*-prefixed function must
+   serialize standalone into exportWallpaperHtml()'s output. */
+function wpLerpColor(hexA, hexB, t) {
+  const a = hexA.replace('#', ''); const b = hexB.replace('#', '');
+  const af = a.length === 3 ? a.split('').map(c => c + c).join('') : a;
+  const bf = b.length === 3 ? b.split('').map(c => c + c).join('') : b;
+  const an = parseInt(af, 16) || 0, bn = parseInt(bf, 16) || 0;
+  const ar = (an >> 16) & 255, ag = (an >> 8) & 255, ab = an & 255;
+  const br = (bn >> 16) & 255, bg = (bn >> 8) & 255, bb = bn & 255;
+  const r = Math.round(ar + (br - ar) * t), g = Math.round(ag + (bg - ag) * t), bl = Math.round(ab + (bb - ab) * t);
+  return 'rgb(' + r + ',' + g + ',' + bl + ')';
+}
+
+/* Drifting particles at three depth bands (parallax: farther = slower
+   and dimmer). Positions come from a cheap per-index hash rather than
+   Math.random(), so every star sits in a fixed spot and just drifts —
+   no per-frame randomness, no state to keep between calls. */
+function wpDrawStarfield(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#020208';
+  const starColors = colors.length > 1 ? colors.slice(1) : ['#ffffff'];
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  const count = 160;
+  for (let i = 0; i < count; i++) {
+    const s1 = Math.sin(i * 12.9898) * 43758.5453; const rx = s1 - Math.floor(s1);
+    const s2 = Math.sin(i * 78.233) * 12345.678; const ry = s2 - Math.floor(s2);
+    const depth = 0.3 + (i % 5) / 5 * 0.7;
+    const x = ((rx * w + t * speed * 14 * depth) % w + w) % w;
+    const y = ry * h;
+    const twinkle = 0.4 + 0.6 * Math.abs(Math.sin(t * speed * 2 + i));
+    const size = 0.6 + depth * 1.8;
+    ctx.globalAlpha = twinkle * depth;
+    ctx.fillStyle = starColors[i % starColors.length];
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* Classic sine-interference plasma, sampled on a coarse grid (not per
+   pixel — a full-resolution per-pixel loop is too slow for a 60fps
+   canvas) and filled as small rects, colored by walking wallpaperState's
+   own color stops instead of a fixed rainbow LUT. */
+function wpDrawPlasma(ctx, w, h, t, colors, speed) {
+  const list = colors.length ? colors : ['#6d5dfc', '#ff6b9d', '#22d3c5'];
+  // /85 here benchmarked at ~22fps-equivalent on a 1080x2280 canvas on
+  // *desktop* Chromium (four Math.sin calls per cell, ~15k cells) —
+  // real Android hardware would likely do worse. /30 keeps the same
+  // interference-pattern look at a much cheaper cell count.
+  const cell = Math.max(10, Math.round(Math.min(w, h) / 30));
+  for (let y = 0; y < h; y += cell) {
+    const ny = y / h;
+    for (let x = 0; x < w; x += cell) {
+      const nx = x / w;
+      const v = Math.sin(nx * 10 + t * speed) + Math.sin(ny * 10 + t * speed * 0.8) +
+        Math.sin((nx + ny) * 10 + t * speed * 1.3) + Math.sin(Math.sqrt(nx * nx + ny * ny) * 14 - t * speed * 1.6);
+      const p = Math.max(0, Math.min(1, (v + 4) / 8));
+      const idx = p * (list.length - 1);
+      const i0 = Math.floor(idx), i1 = Math.min(list.length - 1, i0 + 1);
+      ctx.fillStyle = wpLerpColor(list[i0], list[i1], idx - i0);
+      ctx.fillRect(x, y, cell, cell);
+    }
+  }
+}
+
+/* Concentric rings expanding outward from a handful of centers, each
+   ring fading as it grows — the "handful of centers" positions come
+   from the same cheap deterministic hash as the starfield above. */
+function wpDrawRipple(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#04101a';
+  const ringColors = colors.length > 1 ? colors.slice(1) : colors;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'screen';
+  const maxR = Math.max(w, h) * 0.7;
+  const ringGap = maxR / 6;
+  ringColors.forEach((color, ci) => {
+    const s1 = Math.sin(ci * 43.11) * 10000; const rx = s1 - Math.floor(s1);
+    const s2 = Math.sin(ci * 71.77) * 10000; const ry = s2 - Math.floor(s2);
+    const cx = w * (0.25 + rx * 0.5), cy = h * (0.25 + ry * 0.5);
+    for (let ring = 0; ring < 6; ring++) {
+      const phase = (t * speed * 0.6 + ring / 6 + ci * 0.15) % 1;
+      const r = phase * maxR;
+      ctx.globalAlpha = Math.max(0, (1 - phase) * 0.5);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = ringGap * 0.35;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* Voronoi cells: nearest-seed color per coarse grid cell (again a
+   coarse grid rather than per pixel, for the same performance reason
+   as the plasma pattern above). Seeds drift in slow small orbits so
+   the cell boundaries shift gently instead of jumping. */
+function wpDrawVoronoi(ctx, w, h, t, colors, speed) {
+  const list = colors.length ? colors : ['#6d5dfc', '#ff6b9d', '#22d3c5'];
+  const n = Math.min(7, Math.max(3, list.length));
+  const seeds = [];
+  for (let i = 0; i < n; i++) {
+    const s1 = Math.sin(i * 91.345) * 10000; const rx = s1 - Math.floor(s1);
+    const s2 = Math.sin(i * 37.719) * 10000; const ry = s2 - Math.floor(s2);
+    const ang = t * speed * 0.15 + i;
+    seeds.push({
+      x: w * (0.15 + rx * 0.7 + Math.sin(ang) * 0.04),
+      y: h * (0.15 + ry * 0.7 + Math.cos(ang * 1.3) * 0.04),
+      color: list[i % list.length],
+    });
+  }
+  // Benchmarked at ~73fps-equivalent on desktop Chromium with /60 (n
+  // seed-distance checks per cell) — /28 gives real hardware more margin.
+  const cell = Math.max(10, Math.round(Math.min(w, h) / 28));
+  for (let y = 0; y < h; y += cell) {
+    for (let x = 0; x < w; x += cell) {
+      let best = 0, bestD = Infinity;
+      for (let i = 0; i < seeds.length; i++) {
+        const dx = x - seeds[i].x, dy = y - seeds[i].y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      ctx.fillStyle = seeds[best].color;
+      ctx.fillRect(x, y, cell, cell);
+    }
+  }
+}
+
+/* Mirrored radial symmetry: clip one wedge, fill it with the same
+   drifting-blob content flowingMesh uses, mirror alternating wedges,
+   then repeat around the circle via ctx.rotate — draws the "kaleidoscope
+   tube" once per wedge rather than computing reflected geometry by hand. */
+function wpDrawKaleidoscope(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#050110';
+  const list = colors.length > 1 ? colors.slice(1) : colors;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2;
+  const segments = 8;
+  const wedgeAngle = (Math.PI * 2) / segments;
+  const reach = Math.max(w, h);
+  ctx.globalCompositeOperation = 'screen';
+  for (let s = 0; s < segments; s++) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(s * wedgeAngle);
+    if (s % 2 === 1) ctx.scale(1, -1);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, reach, 0, wedgeAngle);
+    ctx.closePath();
+    ctx.clip();
+    list.forEach((color, i) => {
+      const r = reach * (0.18 + 0.12 * i + 0.05 * Math.sin(t * speed + i));
+      const ang = t * speed * 0.4 + i;
+      const bx = Math.cos(ang) * r * 0.5, by = Math.sin(ang) * r * 0.5;
+      const grad = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+      grad.addColorStop(0, color);
+      grad.addColorStop(1, wpHexToRgba(color, 0));
+      ctx.fillStyle = grad;
+      ctx.fillRect(-reach, -reach, reach * 2, reach * 2);
+    });
+    ctx.restore();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* "Clouds" via layered sine waves rather than true Perlin noise — value
+   noise built from a fixed hash grid would need to be regenerated and
+   stored to look continuous, which this can't do (see the wpMakeNoiseCanvas
+   comment on why every wp* function stays state-free); layered sines are
+   smooth and fully continuous in t on their own, so they drift for free. */
+function wpDrawPerlinClouds(ctx, w, h, t, colors, speed) {
+  const sky = colors[0] || '#0a1930';
+  const cloud = colors.length > 1 ? colors[1] : '#ffffff';
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, h);
+  // Benchmarked at ~29fps-equivalent on desktop Chromium with /70 (three
+  // Math.sin/cos calls per cell) — /28 gives real hardware more margin.
+  const cell = Math.max(10, Math.round(Math.min(w, h) / 28));
+  ctx.fillStyle = cloud;
+  for (let y = 0; y < h; y += cell) {
+    const ny = y / h;
+    for (let x = 0; x < w; x += cell) {
+      const nx = x / w;
+      const n1 = Math.sin(nx * 6 + t * speed * 0.15) * Math.cos(ny * 5 - t * speed * 0.1);
+      const n2 = Math.sin((nx + ny) * 9 + t * speed * 0.25) * 0.5;
+      const n3 = Math.sin(nx * 17 - ny * 13 + t * speed * 0.35) * 0.25;
+      const v = (n1 + n2 + n3 + 1.75) / 3.5;
+      const alpha = (v - 0.42) * 1.3;
+      if (alpha > 0.02) {
+        ctx.globalAlpha = Math.min(0.85, alpha);
+        ctx.fillRect(x, y, cell, cell);
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* Blobs that rise from the bottom, drift sideways, and sink back near
+   the top in a slow loop — a lava lamp's vertical cycle, distinct from
+   flowingMesh's circular drift. The blur is applied to a box around
+   each blob rather than the full canvas (ctx.filter cost scales with
+   the filtered area, and only a small region actually needs it). */
+function wpDrawLavaLamp(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#0a0505';
+  const blobs = colors.length > 1 ? colors.slice(1) : colors;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'screen';
+  blobs.forEach((color, i) => {
+    const n = blobs.length;
+    const cycle = (t * speed * 0.08 + i / n) % 1;
+    const y = h * (1.1 - cycle * 1.2);
+    const x = w * (0.2 + 0.6 * ((i * 0.53) % 1) + 0.08 * Math.sin(t * speed * 0.5 + i * 2));
+    const r = Math.min(w, h) * (0.16 + 0.05 * Math.sin(t * speed + i));
+    ctx.save();
+    ctx.filter = 'blur(' + Math.round(Math.min(w, h) * 0.025) + 'px)';
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, wpHexToRgba(color, 0));
+    ctx.fillStyle = grad;
+    const pad = r * 2;
+    ctx.fillRect(x - pad, y - pad, pad * 2, pad * 2);
+    ctx.restore();
+  });
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* Moiré interference: two full-height line grids, rotating slowly at
+   different rates around the same center, screen-blended so their
+   overlap produces the classic shifting interference bands. */
+function wpDrawMoire(ctx, w, h, t, colors, speed) {
+  const bg = colors[0] || '#050505';
+  const lineA = colors.length > 1 ? colors[1] : '#ffffff';
+  const lineB = colors.length > 2 ? colors[2] : (colors[1] || '#ffffff');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2;
+  const diag = Math.sqrt(w * w + h * h);
+  const spacing = Math.max(6, Math.round(Math.min(w, h) / 40));
+
+  function drawGrid(angle, spacingMul, color, alpha) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = 1.4;
+    const sp = spacing * spacingMul;
+    for (let x = -diag; x <= diag; x += sp) {
+      ctx.beginPath();
+      ctx.moveTo(x, -diag);
+      ctx.lineTo(x, diag);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // A bigger angle delta (and a slightly different spacing) between the
+  // two grids than a first pass used — near-identical grids barely beat
+  // against each other at all; this is tuned to actually read as
+  // interference bands rather than a single set of parallel lines.
+  ctx.globalCompositeOperation = 'screen';
+  drawGrid(t * speed * 0.1, 1, lineA, 0.75);
+  drawGrid(-t * speed * 0.13 + 0.5, 1.15, lineB, 0.75);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 /* A small tileable noise swatch, regenerated fresh each call rather than
    cached, so this stays a pure function safe to serialize into the
    standalone HTML export (see exportWallpaperHtml()) — no module-level
@@ -2499,6 +2773,19 @@ function wpHslToHex(h, s, l) {
 function wpGetTimeOfDayTemperature() {
   const now = new Date();
   const hour = now.getHours() + now.getMinutes() / 60;
+  /* Real sunrise/sunset (Advanced Mode): window.wpSunTimes is set once,
+     asynchronously, by a one-time geolocation fetch in the exported
+     HTML (see exportWallpaperHtml()) — this function itself stays pure
+     and synchronous, just reading that global if it's there. Same
+     warm-dawn / neutral-midday / warm-dusk / cool-night shape as the
+     fixed curve below, anchored to today's real times instead. */
+  if (typeof window !== 'undefined' && window.wpSunTimes) {
+    const { sunrise, sunset } = window.wpSunTimes;
+    if (hour >= sunrise - 0.5 && hour < sunrise + 1) return 30 - ((hour - (sunrise - 0.5)) / 1.5) * 45;
+    if (hour >= sunrise + 1 && hour < sunset - 1) return -15;
+    if (hour >= sunset - 1 && hour < sunset + 0.5) return -15 + ((hour - (sunset - 1)) / 1.5) * 45;
+    return 10;
+  }
   if (hour >= 5 && hour < 8) return 30 + (hour - 5) * 3;
   if (hour >= 8 && hour < 11) return 20 - (hour - 8) * 10;
   if (hour >= 11 && hour < 15) return -15;
@@ -2528,6 +2815,14 @@ function wpDrawFrame(pattern, ctx, w, h, t, colors, speed, effects, timeOfDayTin
   else if (pattern === 'radialPulse') wpDrawRadialPulse(ctx, w, h, t, renderColors, speed);
   else if (pattern === 'conicSpin') wpDrawConicSpin(ctx, w, h, t, renderColors, speed);
   else if (pattern === 'waveBands') wpDrawWaveBands(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'starfield') wpDrawStarfield(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'plasma') wpDrawPlasma(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'ripple') wpDrawRipple(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'voronoi') wpDrawVoronoi(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'kaleidoscope') wpDrawKaleidoscope(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'perlinClouds') wpDrawPerlinClouds(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'lavaLamp') wpDrawLavaLamp(ctx, w, h, t, renderColors, speed);
+  else if (pattern === 'moire') wpDrawMoire(ctx, w, h, t, renderColors, speed);
   else wpDrawFlowingMesh(ctx, w, h, t, renderColors, speed);
   wpApplyEffects(ctx, w, h, effects);
   ctx.restore();
@@ -2592,7 +2887,20 @@ let wallpaperState = {
   seed: null,
   timeOfDayTint: false,
   parallax: false,
+  // Advanced Mode (Pro) — all opt-in, all only ever wired into the
+  // exported Live HTML File (see exportWallpaperHtml()), never the
+  // in-app preview, same reasoning as tilt parallax above: real touch
+  // and sensor events only reach that file once it's opened somewhere
+  // that forwards them.
+  tapRipple: false,
+  shakeRandomize: false,
+  doubleTapPause: false,
+  realSunTimes: false,
+  batteryAware: false,
+  depthParallax: false,
 };
+
+const ADVANCED_PATTERNS = ['starfield', 'plasma', 'ripple', 'voronoi', 'kaleidoscope', 'perlinClouds', 'lavaLamp', 'moire'];
 
 const wallpaperCanvas = document.getElementById('wallpaperCanvas');
 const wallpaperCtx = wallpaperCanvas.getContext('2d');
@@ -2604,6 +2912,59 @@ const wallpaperPresetsGrid = document.getElementById('wallpaperPresetsGrid');
 const wallpaperModeSeg = document.getElementById('wallpaperModeSeg');
 const btnWallpaperNewFrame = document.getElementById('btnWallpaperNewFrame');
 const wallpaperResolutionSelect = document.getElementById('wallpaperResolutionSelect');
+const wallpaperAdvancedToggle = document.getElementById('wallpaperAdvancedToggle');
+const wallpaperAdvancedSection = document.getElementById('wallpaperAdvancedSection');
+
+/* Advanced Mode gates the 8 extra patterns and every interactive/adaptive
+   toggle behind Pro — same "visible, but reverts + opens the Pro modal
+   on an unlicensed attempt" convention as PRO_THEMES in the theme menu,
+   rather than hiding the whole feature set from people who don't know
+   it exists. isProUnlocked()/openProModal() are declared further down
+   the file but, as function declarations, are hoisted — safe to call
+   from here. */
+function isWallpaperAdvancedUnlocked() {
+  return isProUnlocked() && wallpaperAdvancedToggle.checked;
+}
+
+function syncWallpaperAdvancedUI() {
+  const on = wallpaperAdvancedToggle.checked;
+  wallpaperAdvancedSection.hidden = !on;
+  wallpaperPatternSelect.querySelectorAll('.pattern-advanced').forEach(opt => { opt.hidden = !on; });
+  if (!on && ADVANCED_PATTERNS.includes(wallpaperState.pattern)) {
+    wallpaperState.pattern = 'flowingMesh';
+    wallpaperPatternSelect.value = 'flowingMesh';
+    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  }
+}
+
+function sanitizeWallpaperPattern(pattern) {
+  return (ADVANCED_PATTERNS.includes(pattern) && !isWallpaperAdvancedUnlocked()) ? 'flowingMesh' : pattern;
+}
+
+/* Syncs the 6 Advanced Mode feature toggles to wallpaperState — needed
+   anywhere wallpaperState is replaced wholesale (a share link, a saved
+   project, a recently-generated thumbnail), since those fields default
+   to undefined/false on any state object saved before Advanced Mode
+   existed. */
+function syncWallpaperAdvancedFeatureUI() {
+  document.getElementById('wallpaperTapRipple').checked = !!wallpaperState.tapRipple;
+  document.getElementById('wallpaperShakeRandomize').checked = !!wallpaperState.shakeRandomize;
+  document.getElementById('wallpaperDoubleTapPause').checked = !!wallpaperState.doubleTapPause;
+  document.getElementById('wallpaperRealSunTimes').checked = !!wallpaperState.realSunTimes;
+  document.getElementById('wallpaperBatteryAware').checked = !!wallpaperState.batteryAware;
+  document.getElementById('wallpaperDepthParallax').checked = !!wallpaperState.depthParallax;
+}
+
+wallpaperAdvancedToggle.addEventListener('change', () => {
+  if (wallpaperAdvancedToggle.checked && !isProUnlocked()) {
+    wallpaperAdvancedToggle.checked = false;
+    showToast('Advanced Mode is a Pro feature — unlock for ₹39');
+    openProModal();
+    return;
+  }
+  try { localStorage.setItem('gradii_wallpaper_advanced', wallpaperAdvancedToggle.checked ? '1' : '0'); } catch (e) { /* ignore */ }
+  syncWallpaperAdvancedUI();
+});
 
 let wallpaperAnimId = null;
 let wallpaperAnimStart = null;
@@ -2687,24 +3048,25 @@ function renderWallpaperPresets() {
     canvas.title = preset.name;
     const ctx = canvas.getContext('2d');
     wpDrawFrame(preset.pattern, ctx, 96, 96, 0.6, preset.colors, preset.speed, preset.effects);
-    canvas.addEventListener('click', () => {
-      wallpaperState.pattern = preset.pattern;
-      wallpaperState.colors = [...preset.colors];
-      wallpaperState.speed = preset.speed;
-      wallpaperState.effects = preset.effects
-        ? { grain: preset.effects.grain || 0, vignette: preset.effects.vignette || 0, glow: preset.effects.glow || 0, duotone: preset.effects.duotone ? { ...preset.effects.duotone } : null }
-        : { grain: 0, vignette: 0, glow: 0, duotone: null };
-      wallpaperPatternSelect.value = preset.pattern;
-      wallpaperSpeedSlider.value = Math.round(preset.speed * 10);
-      wallpaperSpeedValue.textContent = `${preset.speed.toFixed(1)}×`;
-      renderWallpaperColorsList();
-      syncWallpaperEffectsUI();
-      if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-      showToast(`Loaded "${preset.name}"`);
-    });
+    canvas.addEventListener('click', () => { applyWallpaperPreset(preset); showToast(`Loaded "${preset.name}"`); });
     wallpaperPresetsGrid.appendChild(canvas);
   });
   staggerIn(wallpaperPresetsGrid);
+}
+
+function applyWallpaperPreset(preset) {
+  wallpaperState.pattern = preset.pattern;
+  wallpaperState.colors = [...preset.colors];
+  wallpaperState.speed = preset.speed;
+  wallpaperState.effects = preset.effects
+    ? { grain: preset.effects.grain || 0, vignette: preset.effects.vignette || 0, glow: preset.effects.glow || 0, duotone: preset.effects.duotone ? { ...preset.effects.duotone } : null }
+    : { grain: 0, vignette: 0, glow: 0, duotone: null };
+  wallpaperPatternSelect.value = preset.pattern;
+  wallpaperSpeedSlider.value = Math.round(preset.speed * 10);
+  wallpaperSpeedValue.textContent = `${preset.speed.toFixed(1)}×`;
+  renderWallpaperColorsList();
+  syncWallpaperEffectsUI();
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
 }
 
 /* Deterministic PRNG (mulberry32) so a wallpaper's "random" colors can be
@@ -2865,6 +3227,48 @@ document.getElementById('wallpaperParallaxToggle').addEventListener('change', (e
   wallpaperState.parallax = e.target.checked;
 });
 
+document.getElementById('wallpaperTapRipple').addEventListener('change', (e) => { wallpaperState.tapRipple = e.target.checked; });
+document.getElementById('wallpaperShakeRandomize').addEventListener('change', (e) => { wallpaperState.shakeRandomize = e.target.checked; });
+document.getElementById('wallpaperDoubleTapPause').addEventListener('change', (e) => { wallpaperState.doubleTapPause = e.target.checked; });
+document.getElementById('wallpaperRealSunTimes').addEventListener('change', (e) => { wallpaperState.realSunTimes = e.target.checked; });
+document.getElementById('wallpaperBatteryAware').addEventListener('change', (e) => { wallpaperState.batteryAware = e.target.checked; });
+document.getElementById('wallpaperDepthParallax').addEventListener('change', (e) => { wallpaperState.depthParallax = e.target.checked; });
+
+document.getElementById('wallpaperSeasonalRotation').addEventListener('change', (e) => {
+  try { localStorage.setItem('gradii_wallpaper_seasonal', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
+  if (e.target.checked) applySeasonalWallpaperStyle();
+});
+document.getElementById('wallpaperOfTheDay').addEventListener('change', (e) => {
+  try { localStorage.setItem('gradii_wallpaper_of_the_day', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
+  if (e.target.checked) applyWallpaperOfTheDay();
+});
+
+/* Seasonal auto-style: deterministic month -> WALLPAPER_PRESETS index,
+   applied once when the app opens if the toggle is on (same "on open,
+   not truly in the background" scoping as Chapters, and skipped
+   entirely when Chapters' own auto-apply already ran — two features
+   fighting to set the same state on load would just mean whichever
+   runs last silently wins, so Chapters, being the more specific choice
+   someone deliberately set up per-chapter, takes priority). */
+function applySeasonalWallpaperStyle() {
+  const month = new Date().getMonth(); // 0-11
+  const season = month <= 1 || month === 11 ? 0 : month <= 4 ? 1 : month <= 7 ? 2 : 3; // winter/spring/summer/autumn
+  const seasonPresetNames = ['Sepia Drift', 'Citrus Spin', 'Ocean Waves', 'Molten Core'];
+  const preset = WALLPAPER_PRESETS.find(p => p.name === seasonPresetNames[season]) || WALLPAPER_PRESETS[0];
+  applyWallpaperPreset(preset);
+}
+
+/* Deterministic per-calendar-day pick — a day-of-year hash into
+   WALLPAPER_PRESETS, so it's the same pick all day on this device and a
+   different one tomorrow, with no server or stored "today's pick" needed. */
+function applyWallpaperOfTheDay() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 0);
+  const dayOfYear = Math.floor((now - start) / 86400000);
+  const preset = WALLPAPER_PRESETS[dayOfYear % WALLPAPER_PRESETS.length];
+  applyWallpaperPreset(preset);
+}
+
 /* Wallpaper "Chapters": named looks tied to a time-of-day window,
    applied when the app is opened/foregrounded (or on demand via Check
    Now) — not a true background rotation. Real background switching
@@ -2890,7 +3294,7 @@ function findActiveChapter(chapters) {
   return active;
 }
 function applyWallpaperChapter(chapter) {
-  wallpaperState.pattern = chapter.pattern;
+  wallpaperState.pattern = sanitizeWallpaperPattern(chapter.pattern);
   wallpaperState.colors = [...chapter.colors];
   wallpaperState.speed = chapter.speed;
   wallpaperState.effects = JSON.parse(JSON.stringify(chapter.effects));
@@ -2979,7 +3383,7 @@ wallpaperRecipeFileInput.addEventListener('change', async (e) => {
   try {
     const recipe = JSON.parse(await file.text());
     if (!recipe.pattern || !Array.isArray(recipe.colors)) throw new Error('Not a wallpaper recipe file');
-    wallpaperState.pattern = recipe.pattern;
+    wallpaperState.pattern = sanitizeWallpaperPattern(recipe.pattern);
     wallpaperState.colors = recipe.colors;
     wallpaperState.speed = recipe.speed || 1;
     wallpaperState.effects = recipe.effects || { grain: 0, vignette: 0, glow: 0, duotone: null };
@@ -3261,11 +3665,37 @@ let audioLevel = 0;
 })();
 `;
 
+/* Simplified NOAA solar-calculator equations — accurate to within a few
+   minutes, self-contained (no network call), used only to upgrade the
+   time-of-day tint from a fixed hour curve to today's actual local
+   sunrise/sunset once geolocation is available. */
+function wpComputeSunTimes(lat, lon, date) {
+  const rad = Math.PI / 180;
+  const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+  const fy = (2 * Math.PI / 365) * (dayOfYear - 1);
+  const eqTime = 229.18 * (0.000075 + 0.001868 * Math.cos(fy) - 0.032077 * Math.sin(fy)
+    - 0.014615 * Math.cos(2 * fy) - 0.040849 * Math.sin(2 * fy));
+  const decl = 0.006918 - 0.399912 * Math.cos(fy) + 0.070257 * Math.sin(fy)
+    - 0.006758 * Math.cos(2 * fy) + 0.000907 * Math.sin(2 * fy)
+    - 0.002697 * Math.cos(3 * fy) + 0.00148 * Math.sin(3 * fy);
+  const latRad = lat * rad;
+  const cosH = (Math.cos(90.833 * rad) - Math.sin(latRad) * Math.sin(decl)) / (Math.cos(latRad) * Math.cos(decl));
+  const haDeg = Math.acos(Math.max(-1, Math.min(1, cosH))) / rad;
+  const solarNoon = (720 - 4 * lon - eqTime) / 1440;
+  const tzOffsetHours = -date.getTimezoneOffset() / 60;
+  return {
+    sunrise: (solarNoon - (haDeg * 4) / 1440) * 24 + tzOffsetHours,
+    sunset: (solarNoon + (haDeg * 4) / 1440) * 24 + tzOffsetHours,
+  };
+}
+
 function exportWallpaperHtml() {
   const functionsSrc = [
     wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands,
+    wpLerpColor, wpDrawStarfield, wpDrawPlasma, wpDrawRipple, wpDrawVoronoi, wpDrawKaleidoscope,
+    wpDrawPerlinClouds, wpDrawLavaLamp, wpDrawMoire,
     wpMakeNoiseCanvas, wpApplyEffects, wpHexToHsl, wpHslToHex, wpGetTimeOfDayTemperature, wpApplyTimeOfDayTint,
-    wpDrawFrame,
+    wpDrawFrame, wpComputeSunTimes, mulberry32, seedToInt,
   ]
     .map(fn => fn.toString())
     .join('\n\n');
@@ -3278,6 +3708,12 @@ function exportWallpaperHtml() {
     loopSeconds: wallpaperState.loopSeconds,
     timeOfDayTint: wallpaperState.timeOfDayTint,
     parallax: wallpaperState.parallax,
+    tapRipple: wallpaperState.tapRipple,
+    shakeRandomize: wallpaperState.shakeRandomize,
+    doubleTapPause: wallpaperState.doubleTapPause,
+    realSunTimes: wallpaperState.realSunTimes,
+    batteryAware: wallpaperState.batteryAware,
+    depthParallax: wallpaperState.depthParallax,
   });
   const audioReactive = document.getElementById('wallpaperAudioReactive').checked;
   const html = `<!doctype html>
@@ -3306,16 +3742,133 @@ function resize() {
 }
 resize();
 window.addEventListener('resize', resize);
+
+/* Real sunrise/sunset (Advanced Mode): a one-time geolocation fetch on
+   load, stored as a global the pure wpGetTimeOfDayTemperature() reads
+   if present — never re-requested per frame. Silently keeps the fixed-
+   hour curve if location is denied, times out, or the API is missing. */
+if (wallpaperData.realSunTimes && navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    window.wpSunTimes = wpComputeSunTimes(pos.coords.latitude, pos.coords.longitude, new Date());
+  }, function () {}, { timeout: 8000 });
+}
+
+/* Battery-aware low-power mode (Advanced Mode): feature-detected — most
+   browsers have removed the Battery Status API over fingerprinting
+   concerns, so this silently never engages wherever it's unavailable,
+   same graceful-degradation convention as the Shape Detection API used
+   elsewhere in this app. Caps the frame rate and drops grain/glow
+   instead of stopping the wallpaper outright. */
+let wpLowPower = false;
+if (wallpaperData.batteryAware && navigator.getBattery) {
+  navigator.getBattery().then(function (battery) {
+    function update() { wpLowPower = battery.level < 0.2 && !battery.charging; }
+    update();
+    battery.addEventListener('levelchange', update);
+    battery.addEventListener('chargingchange', update);
+  }).catch(function () {});
+}
+
 let start = null;
+let wallpaperPaused = false;
+let pausedAt = 0;
+let ripples = [];
+let lastLowPowerFrame = 0;
 function loop(ts) {
   if (start === null) start = ts;
+  if (wallpaperPaused) { requestAnimationFrame(loop); return; }
+  if (wpLowPower) {
+    if (ts - lastLowPowerFrame < 66) { requestAnimationFrame(loop); return; }
+    lastLowPowerFrame = ts;
+  }
   let t = (ts - start) / 1000;
   if (wallpaperData.loopPerfect && audioLevel === 0) t = t % wallpaperData.loopSeconds;
   const speed = wallpaperData.speed * (1 + audioLevel * 2.2);
-  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed, wallpaperData.effects, wallpaperData.timeOfDayTint);
+  const effects = wpLowPower ? { grain: 0, vignette: wallpaperData.effects.vignette, glow: 0, duotone: wallpaperData.effects.duotone } : wallpaperData.effects;
+  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed, effects, wallpaperData.timeOfDayTint);
+  if (wallpaperData.tapRipple && ripples.length) {
+    ripples = ripples.filter(function (r) { return ts - r.startTime < 1000; });
+    ripples.forEach(function (r) {
+      const age = (ts - r.startTime) / 1000;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - age) * 0.5;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, age * Math.max(canvas.width, canvas.height) * 0.6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+/* Tap-to-ripple + double-tap pause/resume share one listener since both
+   key off the same tap gesture: a second tap within 300ms of the first
+   is a double-tap (toggles pause, and shifts "start" forward by however
+   long it was paused so resuming doesn't jump the animation ahead);
+   anything else is a single tap (spawns a ripple, if that's on). */
+if (wallpaperData.tapRipple || wallpaperData.doubleTapPause) {
+  let lastTapTime = 0;
+  canvas.addEventListener('click', function (e) {
+    const now = performance.now();
+    if (wallpaperData.doubleTapPause && now - lastTapTime < 300) {
+      wallpaperPaused = !wallpaperPaused;
+      if (wallpaperPaused) pausedAt = now; else start += (now - pausedAt);
+      lastTapTime = 0;
+      return;
+    }
+    lastTapTime = now;
+    if (wallpaperData.tapRipple) {
+      const rect = canvas.getBoundingClientRect();
+      ripples.push({
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height),
+        startTime: now,
+      });
+    }
+  });
+}
+
+/* Shake-to-randomize (Advanced Mode): a large, sudden jerk in
+   accelerationIncludingGravity between two consecutive readings, rate-
+   limited to once every 1.2s so one shake doesn't fire a dozen times. */
+if (wallpaperData.shakeRandomize && window.DeviceMotionEvent) {
+  let lastShakeTime = 0;
+  let lastAccel = null;
+  function handleMotion(e) {
+    const a = e.accelerationIncludingGravity || e.acceleration;
+    if (!a || a.x === null) return;
+    if (lastAccel) {
+      const delta = Math.abs(a.x - lastAccel.x) + Math.abs(a.y - lastAccel.y) + Math.abs(a.z - lastAccel.z);
+      const now = performance.now();
+      if (delta > 28 && now - lastShakeTime > 1200) {
+        lastShakeTime = now;
+        const seed = Math.random().toString(36).slice(2, 8);
+        const rng = mulberry32(seedToInt(seed));
+        const n = wallpaperData.colors.length;
+        const baseHue = rng() * 360;
+        wallpaperData.colors = Array.from({ length: n }, function (_, i) {
+          if (i === 0) return wpHslToHex(baseHue, 30 + rng() * 20, 8 + rng() * 10);
+          return wpHslToHex(baseHue + (rng() - 0.5) * 150, 55 + rng() * 35, 45 + rng() * 25);
+        });
+      }
+    }
+    lastAccel = a;
+  }
+  function startMotion() { window.addEventListener('devicemotion', handleMotion); }
+  if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    document.addEventListener('click', function once() {
+      DeviceMotionEvent.requestPermission().then(function (state) {
+        if (state === 'granted') startMotion();
+      }).catch(function () {});
+      document.removeEventListener('click', once);
+    }, { once: true });
+  } else {
+    startMotion();
+  }
+}
 
 /* Tilt parallax: the canvas itself is rendered ~12% larger than the
    viewport on each axis and CSS-shifted within that slack as the phone
@@ -3324,7 +3877,11 @@ requestAnimationFrame(loop);
    pattern itself is drawn. Falls back to doing nothing wherever
    DeviceOrientationEvent isn't available or permission is denied; iOS
    13+ requires that permission be requested from a user gesture, so
-   this waits for the first tap/click before asking. */
+   this waits for the first tap/click before asking.
+   Depth-layered parallax (Advanced Mode) adds a second, sparse dust
+   layer above the main canvas that tilts at a stronger multiplier —
+   two things moving at different rates reads as real depth, one flat
+   tilted image doesn't. */
 if (wallpaperData.parallax && window.DeviceOrientationEvent) {
   canvas.style.width = '112vw';
   canvas.style.height = '112vh';
@@ -3332,10 +3889,45 @@ if (wallpaperData.parallax && window.DeviceOrientationEvent) {
   canvas.style.left = '-6vw';
   canvas.style.top = '-6vh';
   canvas.style.transition = 'transform 0.2s ease-out';
+
+  let dust = null, dctx = null;
+  if (wallpaperData.depthParallax) {
+    dust = document.createElement('canvas');
+    dust.style.position = 'fixed';
+    dust.style.left = '0';
+    dust.style.top = '0';
+    dust.style.width = '100vw';
+    dust.style.height = '100vh';
+    dust.style.pointerEvents = 'none';
+    dust.style.transition = 'transform 0.2s ease-out';
+    document.body.appendChild(dust);
+    dctx = dust.getContext('2d');
+    function resizeDust() { dust.width = window.innerWidth; dust.height = window.innerHeight; }
+    resizeDust();
+    window.addEventListener('resize', resizeDust);
+    (function drawDust(ts) {
+      dctx.clearRect(0, 0, dust.width, dust.height);
+      const t = (ts || 0) / 1000;
+      for (let i = 0; i < 40; i++) {
+        const s1 = Math.sin(i * 12.9898) * 43758.5453; const rx = s1 - Math.floor(s1);
+        const s2 = Math.sin(i * 78.233) * 12345.678; const ry = s2 - Math.floor(s2);
+        const x = ((rx * dust.width + t * 8) % dust.width + dust.width) % dust.width;
+        const y = ry * dust.height;
+        dctx.globalAlpha = 0.25 + 0.2 * Math.sin(t + i);
+        dctx.fillStyle = '#ffffff';
+        dctx.beginPath();
+        dctx.arc(x, y, 1.4, 0, Math.PI * 2);
+        dctx.fill();
+      }
+      requestAnimationFrame(drawDust);
+    })();
+  }
+
   function applyTilt(gamma, beta) {
     const x = Math.max(-1, Math.min(1, gamma / 30)) * 5;
     const y = Math.max(-1, Math.min(1, (beta - 45) / 30)) * 5;
     canvas.style.transform = 'translate(' + x + 'vw, ' + y + 'vh)';
+    if (dust) dust.style.transform = 'translate(' + (x * 2.2) + 'vw, ' + (y * 2.2) + 'vh)';
   }
   function startOrientation() {
     window.addEventListener('deviceorientation', function (e) {
@@ -3708,9 +4300,11 @@ function loadStateFromUrl() {
     setActiveTab('mesh');
   } else if (tab === 'wallpaper' && state.pattern && state.colors) {
     wallpaperState = state;
+    wallpaperState.pattern = sanitizeWallpaperPattern(wallpaperState.pattern);
     wallpaperPatternSelect.value = wallpaperState.pattern;
     wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
     wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+    syncWallpaperAdvancedFeatureUI();
     wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', (b.dataset.mode === 'live') === wallpaperState.live));
     btnWallpaperNewFrame.hidden = wallpaperState.live;
     renderWallpaperColorsList();
@@ -4255,9 +4849,11 @@ function restoreRecentGenerated(i) {
     renderMeshPreview();
   } else if (entry.tab === 'wallpaper') {
     wallpaperState = state;
+    wallpaperState.pattern = sanitizeWallpaperPattern(wallpaperState.pattern);
     wallpaperPatternSelect.value = wallpaperState.pattern;
     wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
     wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+    syncWallpaperAdvancedFeatureUI();
     renderWallpaperColorsList();
     syncWallpaperEffectsUI();
     syncWallpaperSeedUI();
@@ -4297,6 +4893,7 @@ function loadProject(index) {
   paletteState = p.palette;
   meshState = p.mesh;
   wallpaperState = p.wallpaper;
+  wallpaperState.pattern = sanitizeWallpaperPattern(wallpaperState.pattern);
   syncGradientControlsFromState();
   renderStopsList();
   renderGradientPreview();
@@ -4306,6 +4903,7 @@ function loadProject(index) {
   wallpaperPatternSelect.value = wallpaperState.pattern;
   wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
   wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+  syncWallpaperAdvancedFeatureUI();
   renderWallpaperColorsList();
   syncWallpaperEffectsUI();
   syncWallpaperSeedUI();
@@ -4767,9 +5365,26 @@ function init() {
   renderWallpaperColorsList();
   renderWallpaperPresets();
   renderWallpaperChaptersList();
-  let chaptersAutoOn = false;
-  try { chaptersAutoOn = localStorage.getItem('gradii_wallpaper_chapters_auto') === '1'; } catch (e) { /* ignore */ }
+
+  let advancedOn = false;
+  try { advancedOn = isProUnlocked() && localStorage.getItem('gradii_wallpaper_advanced') === '1'; } catch (e) { /* ignore */ }
+  wallpaperAdvancedToggle.checked = advancedOn;
+  syncWallpaperAdvancedUI();
+
+  let seasonalOn = false, dayOn = false, chaptersAutoOn = false;
+  try {
+    seasonalOn = localStorage.getItem('gradii_wallpaper_seasonal') === '1';
+    dayOn = localStorage.getItem('gradii_wallpaper_of_the_day') === '1';
+    chaptersAutoOn = localStorage.getItem('gradii_wallpaper_chapters_auto') === '1';
+  } catch (e) { /* ignore */ }
+  document.getElementById('wallpaperSeasonalRotation').checked = seasonalOn;
+  document.getElementById('wallpaperOfTheDay').checked = dayOn;
   wallpaperChaptersAutoToggle.checked = chaptersAutoOn;
+  // Least to most specific, each overriding the last: a day-of-year pick,
+  // then a season-matched look, then Chapters' own deliberately-configured
+  // time window — see the hint text next to each toggle.
+  if (dayOn && isWallpaperAdvancedUnlocked()) applyWallpaperOfTheDay();
+  if (seasonalOn && isWallpaperAdvancedUnlocked()) applySeasonalWallpaperStyle();
   if (chaptersAutoOn) {
     const active = findActiveChapter(loadWallpaperChapters());
     if (active) applyWallpaperChapter(active);
