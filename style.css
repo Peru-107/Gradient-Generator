@@ -2413,3 +2413,4 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 @media (max-width: 899px) {
   .wallpaper-studio .export-block { order: 1; }
 }
+.video-progress-eta { margin: -6px 0 0; min-height: 1.2em; }
