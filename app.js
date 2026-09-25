@@ -2563,7 +2563,7 @@ function wpDrawAuroraFlow(ctx, w, h, t, colors, speed) {
     const yBase = h * (0.28 + (i / Math.max(1, bands.length - 1)) * 0.44);
     ctx.beginPath();
     ctx.moveTo(0, h);
-    for (let x = 0; x <= w; x += w / 64) {
+    for (let x = 0; x <= w + 1; x += Math.max(2, w / 720)) {
       const y = yBase + Math.sin((x / w) * Math.PI * freq + t * speed * 1.2 + i) * amp;
       ctx.lineTo(x, y);
     }
@@ -2630,7 +2630,7 @@ function wpDrawWaveBands(ctx, w, h, t, colors, speed) {
     ctx.beginPath();
     ctx.moveTo(0, h);
     ctx.lineTo(0, baseline);
-    for (let x = 0; x <= w; x += w / 64) {
+    for (let x = 0; x <= w + 1; x += Math.max(2, w / 720)) {
       const y = baseline + Math.sin((x / w) * Math.PI * 2 * freq + t * speed * (0.6 + i * 0.2)) * amp;
       ctx.lineTo(x, y);
     }
@@ -3542,9 +3542,10 @@ function wpStyleSilk(ctx, w, h, T, C, p, rnd) {
     const y0 = -H / 2 + (i + 0.3) * (H / n);
     const f = 1.2 + rnd(i * 4 + 1) * 1.6, ph = rnd(i * 4 + 2) * 6.28, A = band * 0.45;
     const top = [], bot = [];
-    for (let s = 0; s <= 48; s++) {
-      const x = -W / 2 + (W * s) / 48;
-      const u = s / 48;
+    const S = Math.max(96, Math.ceil(W / 4));
+    for (let s = 0; s <= S; s++) {
+      const x = -W / 2 + (W * s) / S;
+      const u = s / S;
       const y = y0 + A * Math.sin(u * 6.283 * f + T * 0.35 + ph) + A * 0.4 * Math.sin(u * 6.283 * 2.3 - T * 0.22 + ph);
       top.push([x, y]);
       bot.push([x, y + band * (0.75 + 0.25 * Math.sin(u * 6.283 * 1.3 + T * 0.3 + i))]);
@@ -3554,20 +3555,18 @@ function wpStyleSilk(ctx, w, h, T, C, p, rnd) {
     for (let k = bot.length - 1; k >= 0; k--) ctx.lineTo(bot[k][0], bot[k][1]);
     ctx.closePath();
     const lg = ctx.createLinearGradient(0, y0 - A, 0, y0 + band + A);
-    lg.addColorStop(0, wpShade(color, 0.22));
-    lg.addColorStop(0.35, color);
+    lg.addColorStop(0, wpShade(color, 0.08));
+    lg.addColorStop(0.18, wpShade(color, 0.2));
+    lg.addColorStop(0.42, color);
     lg.addColorStop(0.7, wpShade(color, -0.12));
     lg.addColorStop(1, wpShade(color, -0.3));
-    ctx.shadowColor = `rgba(0,0,0,${0.15 + 0.3 * p.depth})`;
-    ctx.shadowBlur = m * 0.04;
+    ctx.shadowColor = `rgba(0,0,0,${0.08 + 0.22 * p.depth})`;
+    ctx.shadowBlur = m * 0.07;
+    ctx.shadowOffsetY = m * 0.01;
     ctx.fillStyle = lg;
     ctx.fill();
     ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = Math.max(1, m * 0.002);
-    ctx.beginPath();
-    top.forEach(([x, y], k) => (k ? ctx.lineTo(x, y + 2) : ctx.moveTo(x, y + 2)));
-    ctx.stroke();
+    ctx.shadowOffsetY = 0;
   }
   ctx.restore();
 }
@@ -3626,8 +3625,9 @@ function wpStylePaperLayers(ctx, w, h, T, C, p, rnd) {
     const f = 1 + rnd(i * 3 + 1) * 1.5, ph = rnd(i * 3 + 2) * 6.28, dir = i % 2 ? 1 : -1;
     ctx.beginPath();
     ctx.moveTo(0, h);
-    for (let s = 0; s <= 40; s++) {
-      const x = (w * s) / 40, v = s / 40;
+    const S = Math.max(80, Math.ceil(w / 4));
+    for (let s = 0; s <= S; s++) {
+      const x = (w * s) / S, v = s / S;
       ctx.lineTo(x, yBase + A * Math.sin(v * 6.283 * f + T * 0.25 * dir + ph) + A * 0.45 * Math.sin(v * 6.283 * 2.7 - T * 0.18 + ph));
     }
     ctx.lineTo(w, h);
@@ -3894,12 +3894,15 @@ function wpStyleIsoCubes(ctx, w, h, T, C, p) {
       const lift = -s * 0.3 * p.depth * wave;
       const top = wpShade(base, 0.14), left = base, right = wpShade(base, -0.18);
       const y = cy + lift;
-      ctx.fillStyle = top;
-      ctx.beginPath(); ctx.moveTo(cx, y - s); ctx.lineTo(cx + cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx - cw / 2, y - s / 2); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = left;
-      ctx.beginPath(); ctx.moveTo(cx - cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx, y + s); ctx.lineTo(cx - cw / 2, y + s / 2); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = right;
-      ctx.beginPath(); ctx.moveTo(cx + cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx, y + s); ctx.lineTo(cx + cw / 2, y + s / 2); ctx.closePath(); ctx.fill();
+      // Each face is also stroked in its own color: anti-aliased edges of
+      // two touching fills otherwise leave a faint hairline seam.
+      ctx.lineWidth = 1;
+      ctx.fillStyle = ctx.strokeStyle = top;
+      ctx.beginPath(); ctx.moveTo(cx, y - s); ctx.lineTo(cx + cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx - cw / 2, y - s / 2); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = ctx.strokeStyle = left;
+      ctx.beginPath(); ctx.moveTo(cx - cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx, y + s); ctx.lineTo(cx - cw / 2, y + s / 2); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = ctx.strokeStyle = right;
+      ctx.beginPath(); ctx.moveTo(cx + cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx, y + s); ctx.lineTo(cx + cw / 2, y + s / 2); ctx.closePath(); ctx.fill(); ctx.stroke();
     }
   }
 }
@@ -5015,8 +5018,9 @@ btnSetAsWallpaper.addEventListener('click', async () => {
 /* ---- live wallpaper video ----
    Two encoders, best first:
    1. WebCodecs + a small MP4 muxer (loaded on first use): every frame is
-      rendered at an exact 1/30 s step and encoded offline, so the video is
-      a smooth 30 fps on any device, however long each frame takes to draw.
+      rendered at an exact 1/60 s step and encoded offline, so the video is
+      a smooth 60 fps at the screen's full resolution on any device, however
+      long each frame takes to draw.
    2. MediaRecorder (fallback where WebCodecs is missing): records in real
       time, so a slow device gets fewer frames.
    Either way the loop is seamless with no toggle: over the last stretch
@@ -5053,6 +5057,10 @@ function renderLoopFrame(ctx, w, h, t, L, fade) {
     ctx.drawImage(buf, 0, 0);
     ctx.restore();
   }
+  // Video codecs store 8-bit color with coarse chroma, so smooth gradients
+  // band into visible steps. A barely-there static dither breaks the
+  // steps up (fixed tile, so it doesn't shimmer or cost bitrate).
+  if (!((wallpaperState.effects && wallpaperState.effects.grain) > 0.03)) wpGrain(ctx, w, h, 0.035, 0);
   drawWatermark(ctx, w, h);
 }
 let wpVideoJob = null;
@@ -5077,18 +5085,23 @@ function syncWallpaperVideoUI() {
   });
 }
 const nextPaint = () => new Promise(r => requestAnimationFrame(() => r()));
-async function encodeWithWebCodecs(canvas, ctx, w, h, L, fade, fps, progress) {
-  if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return null;
-  if (!(await loadMp4Muxer())) return null;
-  const bitrate = Math.min(20e6, Math.max(5e6, w * h * 5));
-  // H.264 first (plays everywhere, iPhone/iPad Photos included); VP9 in
-  // MP4 only where the device has no H.264 encoder.
-  let config = null, muxCodec = 'avc';
-  for (const [codec, mc] of [['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42002a', 'avc'], ['avc1.42001f', 'avc'], ['vp09.00.40.08', 'vp9'], ['vp09.00.31.08', 'vp9']]) {
-    const c = { codec, width: w, height: h, bitrate, framerate: fps };
-    try { if ((await VideoEncoder.isConfigSupported(c)).supported) { config = c; muxCodec = mc; break; } } catch (e) { /* try next */ }
+/* Picks the best encoder setup for this size: H.264 High (plays
+   everywhere, iPhone/iPad Photos included), with levels high enough for
+   full-resolution 60 fps; VP9-in-MP4 only where there's no H.264 encoder. */
+async function pickVideoEncoderConfig(w, h, fps) {
+  if (typeof VideoEncoder === 'undefined') return null;
+  const bitrate = Math.round(Math.min(40e6, Math.max(8e6, w * h * fps * 0.1)));
+  const options = [['avc1.640034', 'avc'], ['avc1.640033', 'avc'], ['avc1.640032', 'avc'], ['avc1.64002a', 'avc'], ['avc1.4d0034', 'avc'], ['avc1.4d0033', 'avc'], ['avc1.420034', 'avc'], ['vp09.00.51.08', 'vp9'], ['vp09.00.41.08', 'vp9']];
+  for (const [codec, mux] of options) {
+    const config = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality' };
+    try { if ((await VideoEncoder.isConfigSupported(config)).supported) return { config, mux }; } catch (e) { /* try next */ }
   }
-  if (!config) return null;
+  return null;
+}
+async function encodeWithWebCodecs(canvas, ctx, w, h, L, fade, fps, progress, picked) {
+  if (!picked || typeof VideoFrame === 'undefined') return null;
+  if (!(await loadMp4Muxer())) return null;
+  const { config, mux: muxCodec } = picked;
   const muxer = new window.Mp4Muxer.Muxer({ target: new window.Mp4Muxer.ArrayBufferTarget(), video: { codec: muxCodec, width: w, height: h }, fastStart: 'in-memory' });
   let encodeError = null;
   const encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { encodeError = e; } });
@@ -5101,7 +5114,7 @@ async function encodeWithWebCodecs(canvas, ctx, w, h, L, fade, fps, progress) {
     encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
     frame.close();
     progress((i + 1) / N);
-    if (i % 3 === 2 || encoder.encodeQueueSize > 6) await nextPaint();
+    if (i % 4 === 3 || encoder.encodeQueueSize > 8) await nextPaint();
   }
   if (encodeError) throw encodeError;
   await encoder.flush();
@@ -5121,9 +5134,9 @@ async function encodeWithRecorder(canvas, ctx, w, h, L, fade, progress) {
   let stream = canvas.captureStream(0);
   let track = stream.getVideoTracks()[0];
   const manual = !!(track && typeof track.requestFrame === 'function');
-  if (!manual) { stream.getTracks().forEach(tr => tr.stop()); stream = canvas.captureStream(30); }
+  if (!manual) { stream.getTracks().forEach(tr => tr.stop()); stream = canvas.captureStream(60); }
   const push = () => { if (manual) track.requestFrame(); };
-  const recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: Math.min(16e6, Math.max(4e6, w * h * 4)) });
+  const recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: Math.round(Math.min(40e6, Math.max(8e6, w * h * 6))) });
   wpVideoJob.recorder = recorder;
   const chunks = [];
   recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -5155,17 +5168,36 @@ async function exportWallpaperVideo() {
   if (wpVideoJob) return;
   const size = resolveExportSize(wallpaperResolutionSelect);
   if (!size) return;
-  // Encoders want even sizes; the long side is capped at 1920 so phones
-  // can keep up and every player can decode it.
-  const k = Math.min(1, 1920 / Math.max(size.w, size.h));
-  const w = Math.max(2, Math.round((size.w * k) / 2) * 2), h = Math.max(2, Math.round((size.h * k) / 2) * 2);
+  const FPS = 60;
+  // Full export size (the screen's own resolution for "My screen"), only
+  // stepped down if this device's encoder can't take it — never a fixed
+  // cap. Encoders want even dimensions.
+  const even = (v) => Math.max(2, Math.round(v / 2) * 2);
+  let w = even(size.w), h = even(size.h), picked = null;
+  for (const longSide of [Infinity, 4096, 3840, 2560, 1920]) {
+    const k = Math.min(1, longSide / Math.max(size.w, size.h));
+    w = even(size.w * k); h = even(size.h * k);
+    picked = await pickVideoEncoderConfig(w, h, FPS);
+    if (picked || typeof VideoEncoder === 'undefined') break;
+  }
+  if (!picked) { const k = Math.min(1, 3840 / Math.max(size.w, size.h)); w = even(size.w * k); h = even(size.h * k); }
   const L = wallpaperState.videoSeconds || 10;
   const fade = Math.min(2, L * 0.25);
   const overlay = document.getElementById('videoProgressOverlay');
   const bar = document.getElementById('videoProgressBar');
   const label = document.getElementById('videoProgressLabel');
-  const progress = (f) => { bar.style.width = `${Math.round(f * 100)}%`; };
-  label.textContent = `Making a ${L}s live wallpaper (${w}×${h})…`;
+  const eta = document.getElementById('videoProgressEta');
+  const started = performance.now();
+  const progress = (f) => {
+    bar.style.width = `${Math.round(f * 100)}%`;
+    const elapsed = (performance.now() - started) / 1000;
+    if (f > 0.03 && elapsed > 1.5) {
+      const left = Math.max(0, Math.round(elapsed / f - elapsed));
+      eta.textContent = left > 90 ? `About ${Math.round(left / 60)} min left` : `About ${left}s left`;
+    }
+  };
+  label.textContent = `Making a ${L}s live wallpaper · ${w}×${h} · ${FPS} fps`;
+  eta.textContent = '';
   progress(0);
   overlay.hidden = false;
   wpVideoJob = { cancelled: false, recorder: null };
@@ -5176,7 +5208,7 @@ async function exportWallpaperVideo() {
   const ctx = canvas.getContext('2d');
   let blob = null;
   try {
-    blob = await encodeWithWebCodecs(canvas, ctx, w, h, L, fade, 30, progress);
+    blob = await encodeWithWebCodecs(canvas, ctx, w, h, L, fade, FPS, progress, picked);
     if (!blob) {
       label.textContent = `Recording ${L}s at ${w}×${h}… keep Gradii open`;
       blob = await encodeWithRecorder(canvas, ctx, w, h, L, fade, progress);
@@ -5186,7 +5218,7 @@ async function exportWallpaperVideo() {
     else {
       const ext = blob.type === 'video/mp4' ? 'mp4' : 'webm';
       saveFile(blob, `gradii-live-${w}x${h}-${L}s.${ext}`, blob.type);
-      showToast(`Live wallpaper saved (${L}s ${ext.toUpperCase()}, seamless loop)`);
+      showToast(`Live wallpaper saved · ${w}×${h} · ${L}s ${ext.toUpperCase()}`);
       haptic([10, 60, 10]);
     }
   } catch (err) {
