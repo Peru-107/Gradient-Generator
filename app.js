@@ -1,6 +1,39 @@
 'use strict';
 
 /* ==========================================================================
+   Randomness
+   ----------------------------------------------------------------
+   Reported from the Android app: every launch opened on the same colors
+   and Randomize then walked through the same sequence — i.e. the WebView's
+   Math.random was starting from the same state on each cold start. Rather
+   than trust the engine's seeding, every Math.random call in the app is
+   routed through a small fast generator (sfc32) seeded once per launch
+   from the OS entropy pool (crypto.getRandomValues), mixed with the clock
+   as a fallback. No call site changes; the ~60 existing Math.random calls
+   all get a sequence that is different on every launch.
+   ========================================================================== */
+(function seedRandomness() {
+  const seed = new Uint32Array(4);
+  try { crypto.getRandomValues(seed); } catch (e) { /* very old WebView — clock-only fallback below */ }
+  const now = Date.now();
+  const perf = Math.floor((typeof performance !== 'undefined' ? performance.now() : 0) * 1000);
+  let a = (seed[0] ^ now) >>> 0, b = (seed[1] ^ (now / 4294967296)) >>> 0, c = (seed[2] ^ perf) >>> 0, d = (seed[3] ^ 0x9e3779b9) >>> 0;
+  function sfc32() {
+    a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
+    let t = (a + b) | 0;
+    a = b ^ (b >>> 9);
+    b = (c + (c << 3)) | 0;
+    c = (c << 21) | (c >>> 11);
+    d = (d + 1) | 0;
+    t = (t + d) | 0;
+    c = (c + t) | 0;
+    return (t >>> 0) / 4294967296;
+  }
+  for (let i = 0; i < 16; i++) sfc32();
+  Math.random = sfc32;
+})();
+
+/* ==========================================================================
    Color utilities
    ========================================================================== */
 
@@ -189,7 +222,9 @@ function contrastLabel(ratio) {
 const toastEl = document.getElementById('toast');
 let toastTimer = null;
 function showToast(msg) {
-  toastEl.textContent = msg;
+  let text = msg;
+  try { text = voiceToast(msg); } catch (e) { /* voice table not initialised yet during early boot */ }
+  toastEl.textContent = text;
   toastEl.classList.add('show');
   toastPop(toastEl);
   clearTimeout(toastTimer);
@@ -269,12 +304,26 @@ async function saveMediaToGallery(blob, filename, isVideo) {
 /* Inside the packaged Android app, a plain <a download> click on a blob:
    URL is silently swallowed by the WebView — there's no browser download
    manager to hand it to, so nothing happens and nothing asks for
-   permission. Photos/video go straight to the Gallery via saveMediaToGallery;
-   everything else (palette files, CSS/SCSS text, the standalone wallpaper
+   permission. Everything first goes through the DeviceSaver plugin (real
+   save to phone storage); if that's unavailable, photos/video go to the
+   Gallery via saveMediaToGallery and everything else (palette files, CSS/SCSS text, the standalone wallpaper
    HTML) is staged via the Filesystem plugin and handed to the native Share
    sheet, so the user picks where it goes. */
 async function saveFile(blob, filename, mimeType) {
   if (isNativeApp()) {
+    /* First choice: straight into phone storage (Pictures/Movies/Download
+       › Gradii) via the app's own DeviceSaver plugin — a real "download",
+       no Share sheet. The older paths below stay as fallbacks for builds
+       without the plugin, or if saving fails. */
+    const DeviceSaver = window.Capacitor.Plugins.DeviceSaver;
+    if (DeviceSaver) {
+      try {
+        const res = await DeviceSaver.save({ data: await blobToBase64(blob), filename, mimeType: mimeType || blob.type || 'application/octet-stream' });
+        setTimeout(() => showToast(`Saved to ${res && res.path ? res.path : 'your phone'}`), 50);
+        haptic(12);
+        return;
+      } catch (e) { /* fall through */ }
+    }
     const isImage = /^image\//.test(mimeType);
     const isVideo = /^video\//.test(mimeType);
     if ((isImage || isVideo) && window.Capacitor.Plugins.Media) {
@@ -354,6 +403,19 @@ tabButtons.forEach(btn => {
   btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
 });
 
+const navButtons = document.querySelectorAll('.nav-btn');
+navButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.tab === activeTab) { window.scrollTo({ top: 0, behavior: prefersReducedMotionSafe() ? 'auto' : 'smooth' }); return; }
+    setActiveTab(btn.dataset.tab);
+    window.scrollTo({ top: 0 });
+    haptic(8);
+  });
+});
+function prefersReducedMotionSafe() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 function setActiveTab(tab) {
   activeTab = tab;
   tabButtons.forEach(b => {
@@ -361,10 +423,115 @@ function setActiveTab(tab) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
+  navButtons.forEach(b => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
   const fromPanel = document.querySelector('.panel.active');
   const toPanel = document.getElementById('panel-' + tab);
   animateTabSwitch(fromPanel === toPanel ? null : fromPanel, toPanel);
+  if (tab === 'wallpaper') activateWallpaperTab();
+  else stopWallpaperAnimation();
+  if (typeof closeCompare === 'function') closeCompare();
   updateAuroraBackdrop();
+}
+
+/* ==========================================================================
+   Copy voice
+   ----------------------------------------------------------------
+   Each of the four "studio look" themes speaks in its own voice —
+   Darkroom is precise, Paint Chip friendly, Prism playful, Spec Sheet
+   minimal. Every other theme keeps the app's original copy (voice null).
+   Two layers: applyVoice() relabels the handful of always-visible strings
+   (primary buttons, empty states), and voiceToast() rewrites toasts at
+   the one choke point they all pass through (showToast), so no call site
+   needs to know voices exist. Toasts carrying real information (sizes,
+   errors, limits) pass through unchanged — only the generic confirmations
+   get re-voiced, never the facts.
+   ========================================================================== */
+const THEME_VOICE = { darkroom: 'precise', paintchip: 'friendly', prism: 'playful', specsheet: 'minimal' };
+const VOICE = {
+  precise: {
+    randomize: '↻ Randomize', generate: '↻ Generate', wallpaperRandomize: '↻ Randomize colors',
+    savedEmpty: 'No saved palettes. ★ Save stores up to 5 (50 with Pro).',
+    dropTitle: 'Drop an image — JPG, PNG or WebP', dropSub: 'Extracts 5–8 dominant colors on-device. Nothing is uploaded.',
+    saved: 'Saved', copied: 'Copied to clipboard', downloaded: 'PNG exported', loaded: 'Loaded',
+    undo: 'Undo', redo: 'Redo', upsell: (x) => `Pro: ${x}. ₹39, one-time.`,
+    swipeHint: 'Flick ← new · → back', locked: 'Locked', unlocked: 'Unlocked',
+  },
+  friendly: {
+    randomize: '↻ Shuffle colors', generate: '↻ Shuffle colors', wallpaperRandomize: '↻ Shuffle colors',
+    savedEmpty: 'Nothing saved yet. Tap ★ Save and your palette will wait for you here.',
+    dropTitle: "Drop in a photo and we'll pull out its colors", dropSub: 'It all happens on your device — your photo never leaves it.',
+    saved: "Saved. You'll find it under Saved.", copied: 'Copied — paste it anywhere', downloaded: "Downloaded. It's in your Downloads.", loaded: 'Loaded it back up',
+    undo: 'Went back one step', redo: 'Went forward one step', upsell: (x) => `${x} is part of Pro — one-time ₹39`,
+    swipeHint: 'Flick ← new, → back', locked: 'Kept — shuffling won’t change it', unlocked: 'Free to change again',
+  },
+  playful: {
+    randomize: '↻ Roll again', generate: '↻ Roll again', wallpaperRandomize: '↻ Roll again',
+    savedEmpty: 'Nothing here yet. Save a palette and it moves in.',
+    dropTitle: 'Feed me a photo', dropSub: "I'll pick out its best colors — right here, nothing gets uploaded.",
+    saved: "Nice. That one's yours.", copied: 'Copied! Go paste it somewhere nice', downloaded: 'Fresh off the press ✦', loaded: 'Welcome back',
+    undo: 'Rewind!', redo: 'And forward again', upsell: (x) => `${x} lives in the Pro paint box — ₹39, once`,
+    swipeHint: '← fresh roll · → rewind', locked: 'Pinned it', unlocked: 'Unpinned',
+  },
+  minimal: {
+    randomize: '↻ Shuffle', generate: '↻ Shuffle', wallpaperRandomize: '↻ Shuffle',
+    savedEmpty: 'None saved',
+    dropTitle: 'Add image', dropSub: 'Processed on-device',
+    saved: 'Saved', copied: 'Copied', downloaded: 'Downloaded', loaded: 'Loaded',
+    undo: 'Undo', redo: 'Redo', upsell: () => 'Pro · ₹39',
+    swipeHint: '← new · → back', locked: 'Locked', unlocked: 'Unlocked',
+  },
+};
+function currentVoice() {
+  return VOICE[THEME_VOICE[document.documentElement.getAttribute('data-theme')]] || null;
+}
+/* Original copy, captured once from the markup so switching back to a
+   voice-less theme restores it exactly rather than from a second copy of
+   the same strings kept here that could drift out of sync. */
+const VOICE_TARGETS = [
+  ['btnRandomGradient', 'randomize', 'text'],
+  ['btnRandomMesh', 'randomize', 'text'],
+  ['btnRandomWallpaperColors', 'wallpaperRandomize', 'text'],
+  ['btnGeneratePalette', 'generate', 'kbd'],
+  ['savedEmptyHint', 'savedEmpty', 'text'],
+];
+const voiceOriginals = {};
+function applyVoice() {
+  const v = currentVoice();
+  VOICE_TARGETS.forEach(([id, key, mode]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!(id in voiceOriginals)) voiceOriginals[id] = el.innerHTML;
+    if (!v) { el.innerHTML = voiceOriginals[id]; return; }
+    el.textContent = v[key];
+    if (mode === 'kbd' && window.matchMedia('(hover: hover)').matches) el.insertAdjacentHTML('beforeend', ' <kbd>Space</kbd>');
+  });
+  const dz = document.getElementById('dropZone');
+  if (dz) {
+    const title = dz.querySelector('p:not(.drop-zone-sub)');
+    const sub = dz.querySelector('.drop-zone-sub');
+    if (!('dropTitle' in voiceOriginals)) { voiceOriginals.dropTitle = title.innerHTML; voiceOriginals.dropSub = sub.innerHTML; }
+    title.innerHTML = v ? `<strong>${v.dropTitle}</strong>` : voiceOriginals.dropTitle;
+    sub.innerHTML = v ? v.dropSub : voiceOriginals.dropSub;
+  }
+  const swipe = document.querySelectorAll('.swipe-hint');
+  swipe.forEach(el => { el.textContent = (v || VOICE.friendly).swipeHint; });
+}
+function voiceToast(msg) {
+  const v = currentVoice();
+  if (!v || typeof msg !== 'string') return msg;
+  const pro = msg.match(/^(.*) is a Pro (?:feature|theme) — unlock for ₹39$/);
+  if (pro) return v.upsell(pro[1]);
+  if (/ saved$/.test(msg) && msg.split(' ').length <= 2) return v.saved;
+  if (/ loaded$/.test(msg) && msg.split(' ').length <= 2) return v.loaded;
+  if (/ copied$/.test(msg) && !/^#/.test(msg)) return v.copied;
+  if (/PNG downloaded$/.test(msg)) return v.downloaded;
+  if (msg === 'Undo') return v.undo;
+  if (msg === 'Redo') return v.redo;
+  return msg;
 }
 
 /* ==========================================================================
@@ -373,12 +540,13 @@ function setActiveTab(tab) {
 
 const themeToggle = document.getElementById('themeToggle');
 const themeMenu = document.getElementById('themeMenu');
-const THEME_NAMES = ['light', 'dark', 'aurora', 'bento', 'editorial', 'neon', 'outline'];
-const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀', bento: '◧', editorial: '—', neon: '⌁', outline: '◐', system: '🖥' };
+const THEME_NAMES = ['light', 'dark', 'aurora', 'bento', 'editorial', 'neon', 'outline', 'darkroom', 'paintchip', 'prism', 'specsheet'];
+const THEME_ICON = { light: '🌙', dark: '✦', aurora: '☀', bento: '◧', editorial: '—', neon: '⌁', outline: '◐', system: '🖥', darkroom: '◉', paintchip: '▤', prism: '◈', specsheet: '▦' };
 const THEME_LABEL = {
   light: 'Light', dark: 'Dark', aurora: 'Aurora Bento',
   bento: 'Bento Studio', editorial: 'Soft Editorial', neon: 'Neon Console',
   outline: 'High Contrast', system: 'Match System',
+  darkroom: 'Darkroom', paintchip: 'Paint Chip', prism: 'Prism', specsheet: 'Spec Sheet',
 };
 /* "system" isn't a real paintable theme like the six above — it's a mode
    that keeps resolving to whichever of light/dark the OS is currently
@@ -399,12 +567,37 @@ function isThemeUnlocked(theme) {
   try { return localStorage.getItem('gradii_pro_unlocked') === '1'; } catch (e) { return false; }
 }
 
+const THEME_BAR_BG = {
+  light: '#f2f3f8', dark: '#0e0f1e', aurora: '#08070f', bento: '#f4f3fb', editorial: '#fdfcfa', neon: '#08070c', outline: '#000000',
+  darkroom: '#0c0c0e', paintchip: '#f2f2ef', prism: '#f7f5fc', specsheet: '#eeeeea',
+};
+const LIGHT_THEMES = new Set(['light', 'bento', 'editorial', 'paintchip', 'prism', 'specsheet']);
+
+/* The four "studio look" themes each bring their own type pairing. Loaded
+   on demand, once, the first time a theme is actually applied — every
+   other theme runs on the Inter/JetBrains pair already in index.html. */
+const THEME_FONTS = {
+  darkroom: 'family=Schibsted+Grotesk:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600',
+  paintchip: 'family=Archivo:wdth,wght@62..125,400..800&family=DM+Mono:wght@400;500',
+  prism: 'family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Geist+Mono:wght@400;500',
+  specsheet: 'family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1',
+};
+const loadedThemeFonts = new Set();
+function ensureThemeFonts(theme) {
+  const q = THEME_FONTS[theme];
+  if (!q || loadedThemeFonts.has(theme)) return;
+  loadedThemeFonts.add(theme);
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://fonts.googleapis.com/css2?' + q + '&display=swap';
+  document.head.appendChild(link);
+}
+
 function syncNativeStatusBar(theme) {
   const StatusBar = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.StatusBar;
   if (!StatusBar) return;
-  const DARK_BG = { dark: '#0e0f1e', aurora: '#08070f', bento: '#f4f3fb', editorial: '#fdfcfa', neon: '#08070c', outline: '#000000' };
-  const bg = theme === 'light' ? '#f2f3f8' : (DARK_BG[theme] || '#0e0f1e');
-  const style = (theme === 'light' || theme === 'bento' || theme === 'editorial') ? 'LIGHT' : 'DARK';
+  const bg = THEME_BAR_BG[theme] || '#0e0f1e';
+  const style = LIGHT_THEMES.has(theme) ? 'LIGHT' : 'DARK';
   StatusBar.setBackgroundColor({ color: bg }).catch(() => {});
   StatusBar.setStyle({ style }).catch(() => {});
 }
@@ -426,6 +619,10 @@ function applyTheme(theme) {
   themeToggle.title = 'Choose theme (' + (THEME_LABEL[theme] || theme) + ')';
   localStorage.setItem('gradii_theme', theme);
   syncNativeStatusBar(resolved);
+  ensureThemeFonts(resolved);
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (metaTheme) metaTheme.setAttribute('content', THEME_BAR_BG[resolved] || '#6d5dfc');
+  if (typeof applyVoice === 'function') applyVoice();
   refreshThemeMenuUI();
   /* Deferred: on first load this can fire before gradientState/meshState/
      etc. (declared later in this file) have been initialized. */
@@ -496,12 +693,30 @@ function getActiveStudioColors() {
 }
 
 function updateAuroraBackdrop() {
+  updatePrismWear();
   if (!bgOrbs || document.documentElement.getAttribute('data-theme') !== 'aurora') return;
   const colors = getActiveStudioColors();
   if (!colors.length) return;
   bgOrbs.style.setProperty('--live-1', colors[0]);
   bgOrbs.style.setProperty('--live-2', colors[Math.floor(colors.length / 2)] || colors[0]);
   bgOrbs.style.setProperty('--live-3', colors[colors.length - 1]);
+}
+
+/* Prism's primary button "wears" whatever the active studio is showing:
+   first and last colors of the current design as its gradient, with
+   whichever of white/near-black text has the better worst-case contrast
+   across both ends. */
+function updatePrismWear() {
+  const root = document.documentElement;
+  if (root.getAttribute('data-theme') !== 'prism') return;
+  const colors = getActiveStudioColors().filter(c => /^#[0-9a-f]{6}$/i.test(c));
+  if (colors.length < 2) return;
+  const a = colors[0], b = colors[colors.length - 1];
+  root.style.setProperty('--wear-1', a);
+  root.style.setProperty('--wear-2', b);
+  const onWhite = Math.min(contrastRatio(a, '#ffffff'), contrastRatio(b, '#ffffff'));
+  const onDark = Math.min(contrastRatio(a, '#141220'), contrastRatio(b, '#141220'));
+  root.style.setProperty('--wear-ink', onWhite >= onDark ? '#ffffff' : '#141220');
 }
 
 function engageAurora() {
@@ -1355,6 +1570,7 @@ function renderPaletteSwatches() {
       <div class="swatch-info">
         <input type="color" class="swatch-color-input" value="${color}" aria-label="Edit color">
         <span class="swatch-hex" title="Click to copy">${color.toUpperCase()}</span>
+        <span class="color-name">${colorName(color)}</span>
         <div class="swatch-contrast">
           <span class="badge" style="background:#fff;color:#111">white ${contrastLabel(whiteRatio)}</span>
           <span class="badge" style="background:#111;color:#fff">black ${contrastLabel(blackRatio)}</span>
@@ -1483,8 +1699,12 @@ function setSavedPalettes(list) {
 }
 
 function renderSavedPalettes() {
-  const list = getSavedPalettes();
+  const all = getSavedPalettes();
+  const list = activeCollection === 'all' ? all : all.filter(p => p.collection === activeCollection);
   savedEmptyHint.style.display = list.length ? 'none' : 'block';
+  if (!list.length && all.length) savedEmptyHint.textContent = 'Nothing in this collection yet. Save a palette while it’s open, or use ▤ on any saved palette to move it here.';
+  else if (typeof applyVoice === 'function') applyVoice();
+  renderCollectionBar();
   savedPalettesEl.querySelectorAll('.saved-item').forEach(n => n.remove());
   list.forEach(item => {
     const el = document.createElement('div');
@@ -1496,6 +1716,16 @@ function renderSavedPalettes() {
       chip.style.background = c;
       el.appendChild(chip);
     });
+    const move = document.createElement('button');
+    move.className = 'saved-move';
+    move.textContent = '▤';
+    move.title = 'Move to a collection';
+    move.setAttribute('aria-label', 'Move to a collection');
+    move.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCollectionPop(item.id, move);
+    });
+    el.appendChild(move);
     const del = document.createElement('button');
     del.className = 'saved-delete';
     del.textContent = '✕';
@@ -1526,7 +1756,10 @@ document.getElementById('btnSavePalette').addEventListener('click', () => {
     openProModal();
     return;
   }
-  list.unshift({ id: Date.now(), colors: [...paletteState.colors] });
+  const entry = { id: Date.now(), colors: [...paletteState.colors] };
+  // Smart default: saving while a collection is open files it there.
+  if (activeCollection !== 'all') entry.collection = activeCollection;
+  list.unshift(entry);
   setSavedPalettes(list.slice(0, 50));
   renderSavedPalettes();
   showToast('Palette saved');
@@ -3983,12 +4216,17 @@ document.getElementById('btnDownloadWallpaperHtml').addEventListener('click', ()
   showToast(audioOn ? 'Live wallpaper HTML downloaded — it will ask for mic access' : 'Live wallpaper HTML downloaded');
 });
 
-tabButtons.forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (btn.dataset.tab === 'wallpaper') activateWallpaperTab();
-    else stopWallpaperAnimation();
-  });
-});
+/* The wallpaper canvas's backing store has to track its on-screen box —
+   it changes on tab switch (the panel is display:none until the fade-out
+   of the previous one finishes), on rotation, and when the phone stage
+   grip resizes it. Measuring at click time used to catch the still-hidden
+   panel and leave the default 300×150 buffer stretched across the frame. */
+if (window.ResizeObserver) {
+  new ResizeObserver(() => {
+    resizeWallpaperCanvas();
+    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  }).observe(wallpaperCanvas);
+}
 
 /* ==========================================================================
    FULL SCREEN PREVIEW
@@ -4242,6 +4480,7 @@ function renderExtractedPalette() {
       <div class="swatch-top"></div>
       <div class="swatch-info">
         <span class="swatch-hex" title="Click to copy">${color.toUpperCase()}</span>
+        <span class="color-name">${colorName(color)}</span>
       </div>
     `;
     const hexEl = el.querySelector('.swatch-hex');
@@ -4780,8 +5019,17 @@ function createStudioHistory(containerSelector, getState, setState, rerender, de
   if (container) {
     ['input', 'change', 'click'].forEach(evt => container.addEventListener(evt, scheduleSnapshot));
   }
+  /* The state one step back, without moving there — for the compare
+     slider. Flushes a pending snapshot first so "previous" really means
+     the version before what's on screen right now. */
+  function peekPrevious() {
+    clearTimeout(timer);
+    snapshotNow();
+    return idx > 0 ? JSON.parse(stack[idx - 1]) : null;
+  }
+
   setTimeout(snapshotNow, 200);
-  return { undo, redo };
+  return { undo, redo, peekPrevious };
 }
 
 const gradientHistory = createStudioHistory(
@@ -4837,6 +5085,7 @@ document.addEventListener('keydown', (e) => {
 let recentGenerated = [];
 
 function pushRecentGenerated(tab, thumbnailCss, state) {
+  if (bootRandomizing) return;
   recentGenerated.unshift({ tab, thumbnailCss, state: JSON.parse(JSON.stringify(state)) });
   if (recentGenerated.length > 15) recentGenerated.length = 15;
   renderRecentStrip();
@@ -5368,7 +5617,19 @@ document.addEventListener('click', (e) => {
    Init
    ========================================================================== */
 
+let bootRandomizing = false;
 function init() {
+  /* A fresh look on every launch instead of the same violet→pink default
+     each time — the first thing on screen should already show what
+     Randomize does. Shared links (loadStateFromUrl, below) still win. */
+  bootRandomizing = true;
+  try {
+    const count = 2 + Math.floor(Math.random() * 2);
+    gradientState.stops = Array.from({ length: count }, (_, i) => ({ color: '#000000', pos: Math.round((i / (count - 1)) * 100) }));
+    randomizeGradient();
+    randomizeWallpaperColors();
+    meshState.baseColor = hslToHex(Math.random() * 360, 40, 12);
+  } finally { bootRandomizing = false; }
   syncGradientControlsFromState();
   renderStopsList();
   renderGradientPreview();
@@ -5421,7 +5682,765 @@ function init() {
   initGlobalPressFeedback();
   introReveal();
 
-  setTimeout(() => startOnboardingTour(false), prefersReducedMotion ? 200 : 900);
+  setTimeout(() => startGuidedFirstRun(false), prefersReducedMotion ? 200 : 900);
 }
+
+/* ==========================================================================
+   2026 redesign — interaction layer
+   ----------------------------------------------------------------
+   Everything here is an extra *path* to something the app already does
+   (randomize, undo, copy, lock, export) — never the only path. Each
+   gesture has a visible button equivalent, so nobody has to discover a
+   gesture to get work done (a gesture is an accelerator, not a door).
+   ========================================================================== */
+
+/* ---- haptics ----
+   Android WebView and Chrome support navigator.vibrate; iOS Safari
+   silently doesn't, which is fine — haptics only ever confirm something
+   already shown on screen. */
+let hapticsOn = true;
+try { hapticsOn = localStorage.getItem('gradii_haptics') !== '0'; } catch (e) { /* ignore */ }
+function haptic(pattern) {
+  if (!hapticsOn || !navigator.vibrate) return;
+  try { navigator.vibrate(pattern); } catch (e) { /* ignore */ }
+}
+function setHaptics(on) {
+  hapticsOn = on;
+  try { localStorage.setItem('gradii_haptics', on ? '1' : '0'); } catch (e) { /* ignore */ }
+  showToast(on ? 'Haptics on' : 'Haptics off');
+  if (on) haptic(12);
+}
+['btnRandomGradient', 'btnRandomMesh', 'btnRandomWallpaperColors', 'btnGeneratePalette'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => haptic(10));
+});
+
+/* ---- color names ----
+   A human name next to every hex, so a palette can be talked about
+   ("the Harbor blue") and not only pasted. Hue buckets plus a lightness/
+   saturation modifier — deliberately a small, predictable vocabulary
+   rather than a 1,500-entry lookup whose nearest match is often absurd. */
+const COLOR_HUE_NAMES = [
+  [8, 'Scarlet'], [18, 'Vermilion'], [28, 'Ember'], [38, 'Tangerine'], [48, 'Amber'], [58, 'Marigold'],
+  [68, 'Citron'], [80, 'Chartreuse'], [100, 'Lime'], [130, 'Fern'], [155, 'Jade'], [170, 'Mint'],
+  [185, 'Lagoon'], [200, 'Tide Pool'], [212, 'Cerulean'], [225, 'Harbor'], [240, 'Cobalt'], [255, 'Iris'],
+  [270, 'Violet'], [285, 'Dusk Plum'], [300, 'Orchid'], [318, 'Magenta'], [335, 'Fuchsia'], [348, 'Rosehip'], [361, 'Scarlet'],
+];
+function colorName(hex) {
+  const { h, s, l } = hexToHsl(hex);
+  if (s < 12 || l < 6 || l > 96) {
+    if (l < 12) return 'Ink';
+    if (l < 30) return 'Graphite';
+    if (l < 50) return 'Slate';
+    if (l < 70) return 'Pewter';
+    if (l < 90) return 'Fog';
+    return 'Chalk';
+  }
+  if (h >= 18 && h < 50 && s < 40) return l < 35 ? 'Cocoa' : l < 62 ? 'Clay' : 'Sand';
+  const base = COLOR_HUE_NAMES.find(n => h < n[0])[1];
+  if (l < 28) return 'Deep ' + base;
+  if (l > 78) return 'Pale ' + base;
+  if (s < 35) return 'Dusty ' + base;
+  return base;
+}
+
+/* ---- stage grip: resize the pinned preview on phones ---- */
+const STAGE_SIZES = [
+  { vh: 24, label: 'Compact' },
+  { vh: 38, label: 'Balanced' },
+  { vh: 58, label: 'Tall' },
+];
+let stageIndex = 1;
+try { const saved = parseInt(localStorage.getItem('gradii_stage'), 10); if (saved >= 0 && saved < STAGE_SIZES.length) stageIndex = saved; } catch (e) { /* ignore */ }
+function stagePx(i) { return Math.round(window.innerHeight * STAGE_SIZES[i].vh / 100); }
+function applyStage(i, persist) {
+  stageIndex = i;
+  document.documentElement.style.setProperty('--stage-h', STAGE_SIZES[i].vh + 'vh');
+  document.querySelectorAll('.stage-size').forEach(el => { el.textContent = STAGE_SIZES[i].label; });
+  document.querySelectorAll('.sheet-grip').forEach(el => el.setAttribute('aria-valuenow', String(STAGE_SIZES[i].vh)));
+  if (persist) { try { localStorage.setItem('gradii_stage', String(i)); } catch (e) { /* ignore */ } }
+}
+document.querySelectorAll('#panel-gradient .preview-frame, #panel-mesh .preview-frame, #panel-wallpaper .preview-frame').forEach(frame => {
+  const grip = document.createElement('button');
+  grip.type = 'button';
+  grip.className = 'sheet-grip';
+  grip.setAttribute('role', 'slider');
+  grip.setAttribute('aria-label', 'Preview size — tap to cycle, drag to resize');
+  grip.setAttribute('aria-valuemin', '24');
+  grip.setAttribute('aria-valuemax', '58');
+  grip.innerHTML = '<span class="swipe-hint"></span><span class="stage-size"></span>';
+  frame.appendChild(grip);
+  frame.classList.add('has-grip');
+
+  let startY = 0, startH = 0, moved = false, dragging = false;
+  grip.addEventListener('pointerdown', (e) => {
+    dragging = true; moved = false;
+    startY = e.clientY;
+    startH = stagePx(stageIndex);
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add('stage-resizing');
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dy = e.clientY - startY;
+    if (Math.abs(dy) > 4) moved = true;
+    if (!moved) return;
+    const h = clamp(startH + dy, stagePx(0) - 20, stagePx(STAGE_SIZES.length - 1) + 20);
+    document.documentElement.style.setProperty('--stage-h', h + 'px');
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove('stage-resizing');
+    if (!moved) { applyStage((stageIndex + 1) % STAGE_SIZES.length, true); haptic(8); return; }
+    const h = stagePx(stageIndex) + (e.clientY - startY);
+    let best = 0;
+    STAGE_SIZES.forEach((_, i) => { if (Math.abs(stagePx(i) - h) < Math.abs(stagePx(best) - h)) best = i; });
+    applyStage(best, true);
+    haptic(8);
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+  grip.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp') { e.preventDefault(); applyStage(Math.max(0, stageIndex - 1), true); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); applyStage(Math.min(STAGE_SIZES.length - 1, stageIndex + 1), true); }
+  });
+});
+applyStage(stageIndex, false);
+
+/* ---- flick the stage: ← new, → back ----
+   Only a fast, mostly-horizontal flick from a touch counts (under 350ms,
+   over 60px) — slow drags keep their existing meaning (setting the angle,
+   moving a mesh blob). Because those drags have already nudged the design
+   by the time a flick is recognised, the state captured at touch-down is
+   restored first, so a flick never leaves a half-applied drag behind. */
+const STAGE_FLICK = {
+  gradient: {
+    el: () => document.getElementById('gradientPreview'),
+    snap: () => JSON.stringify(gradientState),
+    restore: (j) => { gradientState = JSON.parse(j); syncGradientControlsFromState(); renderStopsList(); renderGradientPreview(); },
+    next: () => randomizeGradient(),
+    back: () => gradientHistory.undo(),
+  },
+  mesh: {
+    el: () => document.getElementById('meshPreview'),
+    snap: () => JSON.stringify(meshState),
+    restore: (j) => { meshState = JSON.parse(j); renderMeshBlobsList(); renderMeshPreview(); },
+    next: () => randomizeMesh(),
+    back: () => meshHistory.undo(),
+  },
+  wallpaper: {
+    el: () => document.getElementById('wallpaperCanvas'),
+    snap: () => null,
+    restore: () => {},
+    next: () => randomizeWallpaperColors(),
+    back: () => wallpaperHistory.undo(),
+  },
+  palette: {
+    el: () => document.getElementById('paletteSwatches'),
+    snap: () => null,
+    restore: () => {},
+    next: () => generatePalette(),
+    back: () => loadPaletteHistory(paletteHistoryIndex - 1),
+  },
+};
+Object.entries(STAGE_FLICK).forEach(([tab, cfg]) => {
+  const el = cfg.el();
+  if (!el) return;
+  let start = null;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' || !e.isPrimary) { start = null; return; }
+    if (e.target.closest('button, input, .compare-divider')) { start = null; return; }
+    start = { x: e.clientX, y: e.clientY, t: performance.now(), snap: cfg.snap() };
+  }, true);
+  el.addEventListener('pointerup', (e) => {
+    if (!start) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y, dt = performance.now() - start.t;
+    const snap = start.snap;
+    start = null;
+    if (dt > 350 || Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    if (snap) cfg.restore(snap);
+    closeCompare();
+    if (dx < 0) { cfg.next(); haptic(10); }
+    else if (cfg.back()) { haptic([6, 40, 6]); showToast('Undo'); }
+    else showToast('Nothing earlier — flick left for a new one');
+  }, true);
+  el.addEventListener('pointercancel', () => { start = null; }, true);
+});
+
+/* ---- long-press (or right-click) a palette color ---- */
+const colorPop = document.getElementById('colorPop');
+let colorPopIndex = -1;
+let suppressNextClick = false;
+function placePop(pop, x, y) {
+  pop.hidden = false;
+  const r = pop.getBoundingClientRect();
+  const left = clamp(x - r.width / 2, 12, window.innerWidth - r.width - 12);
+  const top = y + r.height + 16 > window.innerHeight ? Math.max(12, y - r.height - 12) : y + 12;
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+  const first = pop.querySelector('button');
+  if (first) first.focus({ preventScroll: true });
+}
+function openColorPop(i, x, y) {
+  const color = paletteState.colors[i];
+  if (!color) return;
+  colorPopIndex = i;
+  document.getElementById('colorPopChip').style.background = color;
+  document.getElementById('colorPopName').textContent = colorName(color);
+  document.getElementById('colorPopHex').textContent = color.toUpperCase();
+  const v = currentVoice();
+  const lockLabel = paletteState.locked[i] ? 'Unlock' : (v === VOICE.friendly ? 'Keep this color' : v === VOICE.playful ? 'Pin it' : 'Lock');
+  colorPop.querySelector('[data-pop="lock"]').textContent = lockLabel;
+  placePop(colorPop, x, y);
+  haptic(15);
+}
+function closePops() {
+  colorPop.hidden = true;
+  collectionPop.hidden = true;
+}
+paletteSwatchesEl.addEventListener('pointerdown', (e) => {
+  const sw = e.target.closest('.swatch');
+  if (!sw || e.button > 0 || e.target.closest('button, input')) return;
+  const i = Array.from(paletteSwatchesEl.children).indexOf(sw);
+  const x0 = e.clientX, y0 = e.clientY;
+  sw.classList.add('pressing');
+  const timer = setTimeout(() => {
+    sw.classList.remove('pressing');
+    suppressNextClick = true;
+    openColorPop(i, x0, y0);
+  }, 480);
+  const cancel = () => { clearTimeout(timer); sw.classList.remove('pressing'); cleanup(); };
+  const move = (ev) => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 10) cancel(); };
+  function cleanup() {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', cancel);
+    window.removeEventListener('pointercancel', cancel);
+  }
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', cancel);
+  window.addEventListener('pointercancel', cancel);
+});
+paletteSwatchesEl.addEventListener('contextmenu', (e) => {
+  const sw = e.target.closest('.swatch');
+  if (!sw) return;
+  e.preventDefault();
+  if (colorPop.hidden) openColorPop(Array.from(paletteSwatchesEl.children).indexOf(sw), e.clientX, e.clientY);
+});
+paletteSwatchesEl.addEventListener('click', (e) => {
+  if (suppressNextClick) { suppressNextClick = false; e.stopPropagation(); e.preventDefault(); }
+}, true);
+colorPop.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-pop]');
+  if (!btn) return;
+  const i = colorPopIndex;
+  const color = paletteState.colors[i];
+  closePops();
+  if (!color) return;
+  const act = btn.dataset.pop;
+  if (act === 'hex') copyText(color.toUpperCase(), `${color.toUpperCase()} copied`);
+  else if (act === 'rgb') { const { r, g, b } = hexToRgb(color); copyText(`rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`, 'RGB copied'); }
+  else if (act === 'lock') {
+    paletteState.locked[i] = !paletteState.locked[i];
+    renderPaletteSwatches();
+    const v = currentVoice() || VOICE.precise;
+    showToast(paletteState.locked[i] ? v.locked : v.unlocked);
+    haptic(10);
+  } else if (act === 'gradient') {
+    const { h, s, l } = hexToHsl(color);
+    gradientState.stops = [
+      { color, pos: 0 },
+      { color: hslToHex(h + 35, clamp(s, 40, 95), clamp(l + 8, 25, 80)), pos: 100 },
+    ];
+    syncGradientControlsFromState();
+    renderStopsList();
+    renderGradientPreview();
+    setActiveTab('gradient');
+    window.scrollTo({ top: 0 });
+    showToast(`Gradient started from ${colorName(color)}`);
+  }
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('.color-pop')) closePops();
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePops(); });
+
+/* ---- compare with the previous version ---- */
+let compareState = null;
+function closeCompare() {
+  if (!compareState) return;
+  compareState.layer.remove();
+  compareState.divider.remove();
+  compareState.tags.forEach(t => t.remove());
+  compareState.btn.setAttribute('aria-pressed', 'false');
+  compareState = null;
+}
+function openCompare(studio, btn) {
+  const prev = studio === 'gradient' ? gradientHistory.peekPrevious() : meshHistory.peekPrevious();
+  if (!prev) { showToast('Nothing to compare yet — change something first'); return; }
+  const host = document.getElementById(studio === 'gradient' ? 'gradientPreview' : 'meshPreview');
+  const layer = document.createElement('div');
+  layer.className = 'compare-layer';
+  if (studio === 'gradient') layer.style.background = buildGradientCss(prev);
+  else {
+    layer.style.backgroundColor = prev.baseColor;
+    layer.style.backgroundImage = buildMeshCssLayers(prev).join(', ');
+    layer.style.backgroundBlendMode = prev.blendMode;
+  }
+  const divider = document.createElement('div');
+  divider.className = 'compare-divider';
+  divider.setAttribute('role', 'slider');
+  divider.setAttribute('tabindex', '0');
+  divider.setAttribute('aria-label', 'Before / after position');
+  const tagA = document.createElement('span'); tagA.className = 'compare-tag compare-tag-before'; tagA.textContent = 'Before';
+  const tagB = document.createElement('span'); tagB.className = 'compare-tag compare-tag-after'; tagB.textContent = 'Now';
+  host.append(layer, divider, tagA, tagB);
+  const setPos = (pct) => {
+    pct = clamp(pct, 0, 100);
+    layer.style.clipPath = `inset(0 ${100 - pct}% 0 0)`;
+    divider.style.left = pct + '%';
+    divider.setAttribute('aria-valuenow', String(Math.round(pct)));
+    compareState.pct = pct;
+  };
+  compareState = { layer, divider, tags: [tagA, tagB], btn, pct: 50 };
+  setPos(50);
+  divider.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    divider.setPointerCapture(e.pointerId);
+    const move = (ev) => { const r = host.getBoundingClientRect(); setPos(((ev.clientX - r.left) / r.width) * 100); };
+    const up = () => { divider.removeEventListener('pointermove', move); divider.removeEventListener('pointerup', up); };
+    divider.addEventListener('pointermove', move);
+    divider.addEventListener('pointerup', up);
+  });
+  divider.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); setPos(compareState.pct - 5); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); setPos(compareState.pct + 5); }
+  });
+  btn.setAttribute('aria-pressed', 'true');
+}
+document.querySelectorAll('.compare-btn').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (compareState) { const same = compareState.btn === btn; closeCompare(); if (same) return; }
+    openCompare(btn.dataset.compare, btn);
+  });
+});
+document.querySelectorAll('.btn-primary, .tab-btn, .nav-btn').forEach(el => el.addEventListener('click', closeCompare));
+
+/* ---- device mockup ---- */
+let mockupStudio = 'gradient';
+let mockupDevice = 'phone';
+const mockupOverlay = document.getElementById('mockupOverlay');
+const mockupCanvas = document.getElementById('mockupCanvas');
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function mixHex(a, b, t) {
+  const A = hexToRgb(a), B = hexToRgb(b);
+  return rgbToHex(A.r + (B.r - A.r) * t, A.g + (B.g - A.g) * t, A.b + (B.b - A.b) * t);
+}
+function renderDesignInto(ctx, w, h) {
+  if (mockupStudio === 'gradient') drawGradientToCanvas(ctx, w, h, gradientState);
+  else if (mockupStudio === 'mesh') drawMeshToCanvas(ctx, w, h, meshState);
+  else wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
+}
+function drawMockup() {
+  const W = mockupCanvas.width, H = mockupCanvas.height;
+  const ctx = mockupCanvas.getContext('2d');
+  const colors = (mockupStudio === 'gradient' ? gradientState.stops.map(s => s.color)
+    : mockupStudio === 'mesh' ? meshState.points.map(p => p.color) : wallpaperState.colors.slice(1))
+    .filter(c => /^#[0-9a-f]{6}$/i.test(c));
+  const c0 = colors[0] || '#6d5dfc', c1 = colors[colors.length - 1] || '#ff6b9d';
+  // Backdrop: the design's own two ends, washed almost to white — the
+  // device sits in its own light rather than on a generic grey.
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, mixHex(c0, '#ffffff', 0.86));
+  bg.addColorStop(1, mixHex(c1, '#ffffff', 0.9));
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  let body, screen, radius, screenRadius;
+  if (mockupDevice === 'phone') {
+    const bh = H * 0.84, bw = bh * 0.49;
+    body = { x: (W - bw) / 2, y: (H - bh) / 2, w: bw, h: bh }; radius = bw * 0.16;
+    const inset = bw * 0.035;
+    screen = { x: body.x + inset, y: body.y + inset, w: bw - inset * 2, h: bh - inset * 2 }; screenRadius = radius - inset;
+  } else if (mockupDevice === 'tablet') {
+    const bh = H * 0.82, bw = bh * 0.74;
+    body = { x: (W - bw) / 2, y: (H - bh) / 2, w: bw, h: bh }; radius = bw * 0.06;
+    const inset = bw * 0.04;
+    screen = { x: body.x + inset, y: body.y + inset, w: bw - inset * 2, h: bh - inset * 2 }; screenRadius = radius * 0.55;
+  } else {
+    const bw = W * 0.72, bh = bw * 0.64;
+    body = { x: (W - bw) / 2, y: H * 0.1, w: bw, h: bh }; radius = bw * 0.025;
+    const inset = bw * 0.028;
+    screen = { x: body.x + inset, y: body.y + inset, w: bw - inset * 2, h: bh - inset * 2.2 }; screenRadius = 4;
+  }
+  // Soft contact shadow
+  ctx.save();
+  ctx.shadowColor = 'rgba(20, 16, 40, 0.28)';
+  ctx.shadowBlur = 60;
+  ctx.shadowOffsetY = 30;
+  roundRectPath(ctx, body.x, body.y, body.w, body.h, radius);
+  ctx.fillStyle = '#121216';
+  ctx.fill();
+  ctx.restore();
+  // Bezel edge highlight
+  roundRectPath(ctx, body.x + 1.5, body.y + 1.5, body.w - 3, body.h - 3, radius);
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // Screen content
+  const off = document.createElement('canvas');
+  off.width = Math.round(screen.w); off.height = Math.round(screen.h);
+  renderDesignInto(off.getContext('2d'), off.width, off.height);
+  ctx.save();
+  roundRectPath(ctx, screen.x, screen.y, screen.w, screen.h, screenRadius);
+  ctx.clip();
+  ctx.drawImage(off, screen.x, screen.y);
+  // A faint glass sheen across the top-left
+  const sheen = ctx.createLinearGradient(screen.x, screen.y, screen.x + screen.w * 0.6, screen.y + screen.h * 0.6);
+  sheen.addColorStop(0, 'rgba(255,255,255,0.10)');
+  sheen.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(screen.x, screen.y, screen.w, screen.h);
+  ctx.restore();
+  if (mockupDevice === 'phone') {
+    const pw = screen.w * 0.3, ph = screen.w * 0.085;
+    roundRectPath(ctx, body.x + (body.w - pw) / 2, screen.y + ph * 0.5, pw, ph, ph / 2);
+    ctx.fillStyle = '#0a0a0c';
+    ctx.fill();
+  } else if (mockupDevice === 'laptop') {
+    const baseY = body.y + body.h;
+    const baseW = body.w * 1.16;
+    ctx.fillStyle = '#c9c9cf';
+    ctx.beginPath();
+    ctx.moveTo(W / 2 - body.w / 2, baseY);
+    ctx.lineTo(W / 2 + body.w / 2, baseY);
+    ctx.lineTo(W / 2 + baseW / 2, baseY + H * 0.035);
+    ctx.lineTo(W / 2 - baseW / 2, baseY + H * 0.035);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#a9a9b1';
+    roundRectPath(ctx, W / 2 - body.w * 0.09, baseY, body.w * 0.18, H * 0.012, 6);
+    ctx.fill();
+  }
+  drawWatermark(ctx, W, H);
+}
+function openMockup(studio) {
+  mockupStudio = studio;
+  mockupOverlay.hidden = false;
+  document.getElementById('btnMockupShare').hidden = !(navigator.canShare && navigator.share);
+  drawMockup();
+}
+document.querySelectorAll('.mockup-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); openMockup(btn.dataset.mockup); }));
+document.getElementById('btnCloseMockup').addEventListener('click', () => { mockupOverlay.hidden = true; });
+mockupOverlay.addEventListener('click', (e) => { if (e.target === mockupOverlay) mockupOverlay.hidden = true; });
+document.getElementById('mockupDeviceSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-device]');
+  if (!b) return;
+  mockupDevice = b.dataset.device;
+  document.querySelectorAll('#mockupDeviceSeg .seg-btn').forEach(x => {
+    x.classList.toggle('active', x === b);
+    x.setAttribute('aria-checked', x === b ? 'true' : 'false');
+  });
+  drawMockup();
+});
+document.getElementById('btnMockupDownload').addEventListener('click', () => {
+  downloadCanvasPng(mockupCanvas, `gradii-${mockupStudio}-${mockupDevice}-mockup.png`);
+  showToast('Mockup PNG downloaded');
+});
+document.getElementById('btnMockupShare').addEventListener('click', () => {
+  mockupCanvas.toBlob(async (blob) => {
+    const file = new File([blob], `gradii-${mockupStudio}-${mockupDevice}.png`, { type: 'image/png' });
+    if (!navigator.canShare({ files: [file] })) { showToast('Sharing images isn’t supported here — use Download'); return; }
+    try { await navigator.share({ files: [file], title: 'Made in Gradii' }); } catch (err) { /* user cancelled */ }
+  }, 'image/png');
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !mockupOverlay.hidden) mockupOverlay.hidden = true; });
+
+/* ---- collections for saved palettes ---- */
+let activeCollection = 'all';
+const collectionPop = document.getElementById('collectionPop');
+function getCollections() {
+  try { const l = JSON.parse(localStorage.getItem('gradii_collections') || '[]'); return Array.isArray(l) ? l : []; }
+  catch (e) { return []; }
+}
+function setCollections(list) {
+  try { localStorage.setItem('gradii_collections', JSON.stringify(list)); } catch (e) { /* ignore */ }
+}
+function createCollection(name) {
+  name = (name || '').trim().slice(0, 32);
+  if (!name) return null;
+  const list = getCollections();
+  if (!list.includes(name)) { list.push(name); setCollections(list); }
+  return name;
+}
+function renderCollectionBar() {
+  const bar = document.getElementById('collectionBar');
+  if (!bar) return;
+  const saved = getSavedPalettes();
+  const cols = getCollections();
+  if (activeCollection !== 'all' && !cols.includes(activeCollection)) activeCollection = 'all';
+  bar.innerHTML = '';
+  const chip = (label, key, count) => {
+    const b = document.createElement('button');
+    b.className = 'collection-chip' + (activeCollection === key ? ' active' : '');
+    b.innerHTML = `${escapeHtmlText(label)}<span class="count">${count}</span>`;
+    b.setAttribute('aria-pressed', activeCollection === key ? 'true' : 'false');
+    b.addEventListener('click', () => { activeCollection = key; renderSavedPalettes(); });
+    bar.appendChild(b);
+  };
+  chip('All', 'all', saved.length);
+  cols.forEach(c => chip(c, c, saved.filter(p => p.collection === c).length));
+  const add = document.createElement('button');
+  add.className = 'collection-chip';
+  add.textContent = '+ New collection';
+  add.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.className = 'text-input collection-new-input';
+    input.placeholder = 'Name, then Enter';
+    input.maxLength = 32;
+    add.replaceWith(input);
+    input.focus();
+    const commit = () => {
+      const name = createCollection(input.value);
+      if (name) { activeCollection = name; showToast(`Collection “${name}” created`); }
+      renderSavedPalettes();
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') renderSavedPalettes(); });
+    input.addEventListener('blur', () => { if (input.isConnected) commit(); });
+  });
+  bar.appendChild(add);
+}
+function escapeHtmlText(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function openCollectionPop(paletteId, anchor) {
+  const item = getSavedPalettes().find(p => p.id === paletteId);
+  if (!item) return;
+  collectionPop.innerHTML = '<div class="color-pop-title">Move to</div>';
+  const opt = (label, key) => {
+    const b = document.createElement('button');
+    b.setAttribute('role', 'menuitem');
+    b.textContent = label;
+    if ((item.collection || null) === key) b.classList.add('current');
+    b.addEventListener('click', () => {
+      const list = getSavedPalettes().map(p => (p.id === paletteId ? { ...p, collection: key || undefined } : p));
+      setSavedPalettes(list);
+      closePops();
+      renderSavedPalettes();
+      showToast(key ? `Moved to ${key}` : 'Removed from collection');
+    });
+    collectionPop.appendChild(b);
+  };
+  getCollections().forEach(c => opt(c, c));
+  opt('No collection', null);
+  const input = document.createElement('input');
+  input.className = 'text-input';
+  input.placeholder = 'New collection…';
+  input.maxLength = 32;
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const name = createCollection(input.value);
+    if (!name) return;
+    const list = getSavedPalettes().map(p => (p.id === paletteId ? { ...p, collection: name } : p));
+    setSavedPalettes(list);
+    closePops();
+    renderSavedPalettes();
+    showToast(`Moved to ${name}`);
+  });
+  collectionPop.appendChild(input);
+  const r = anchor.getBoundingClientRect();
+  placePop(collectionPop, r.left + r.width / 2, r.bottom);
+}
+
+/* ---- guided first run ----
+   Three decisions, each one tap, ending on a real result instead of a
+   tour of controls: what you're making → a mood → your first design,
+   live in the studio, with the two or three gestures worth knowing. */
+const GUIDE_MAKES = [
+  { key: 'gradient', title: 'A background', sub: 'Smooth gradient for a site, slide or wallpaper' },
+  { key: 'palette', title: 'A color palette', sub: '5 colors that work together, with names' },
+  { key: 'wallpaper', title: 'A live wallpaper', sub: 'Animated, sized for your phone or tablet' },
+  { key: 'mesh', title: 'A soft blend', sub: 'Blurry mesh of colors, drag the blobs around' },
+];
+const GUIDE_MOODS = {
+  calm: { title: 'Calm', hues: [[175, 235]], s: [30, 55], l: [58, 80] },
+  bold: { title: 'Bold', hues: [[0, 360]], s: [80, 95], l: [45, 56], spread: 120 },
+  sunset: { title: 'Sunset', hues: [[330, 400]], s: [72, 92], l: [52, 66] },
+  ocean: { title: 'Ocean', hues: [[180, 235]], s: [60, 88], l: [28, 58] },
+  forest: { title: 'Forest', hues: [[85, 160]], s: [32, 60], l: [24, 50] },
+  neon: { title: 'Neon', hues: [[0, 360]], s: [95, 100], l: [52, 60], spread: 150 },
+  pastel: { title: 'Pastel', hues: [[0, 360]], s: [60, 78], l: [80, 88], spread: 140 },
+  mono: { title: 'Mono', hues: [[0, 360]], s: [8, 18], l: [18, 82], spread: 0 },
+};
+function moodColors(moodKey, n) {
+  const m = GUIDE_MOODS[moodKey] || GUIDE_MOODS.bold;
+  const [h0, h1] = m.hues[0];
+  const r = (a, b) => a + Math.random() * (b - a);
+  const base = r(h0, h1);
+  const spread = m.spread ?? (h1 - h0);
+  const out = Array.from({ length: n }, (_, i) => {
+    const t = n > 1 ? i / (n - 1) : 0;
+    const h = (m.spread != null ? base + (t - 0.5) * spread : h0 + t * (h1 - h0) + r(-8, 8)) % 360;
+    const l = moodKey === 'mono' ? m.l[0] + t * (m.l[1] - m.l[0]) : r(m.l[0], m.l[1]);
+    return hslToHex((h + 360) % 360, r(m.s[0], m.s[1]), l);
+  });
+  return out;
+}
+function applyMoodTo(studio, mood) {
+  if (studio === 'gradient') {
+    const cols = moodColors(mood, 3);
+    gradientState.stops = cols.map((c, i) => ({ color: c, pos: Math.round((i / (cols.length - 1)) * 100) }));
+    if (gradientState.type === 'linear') gradientState.angle = Math.round(100 + Math.random() * 60);
+    syncGradientControlsFromState(); renderStopsList(); renderGradientPreview();
+    pushRecentGenerated('gradient', buildGradientCss(gradientState), gradientState);
+  } else if (studio === 'palette') {
+    paletteState.count = 5;
+    paletteState.colors = moodColors(mood, 5);
+    paletteState.locked = paletteState.colors.map(() => false);
+    paletteCountSlider.value = 5; paletteCountValue.textContent = '5';
+    renderPaletteSwatches(); pushPaletteHistory();
+  } else if (studio === 'mesh') {
+    const cols = moodColors(mood, 5);
+    meshState.points = randomMeshPoints(5, meshState.family).map((p, i) => ({ ...p, color: cols[i] }));
+    meshState.baseColor = mixHex(cols[0], '#000000', 0.55);
+    renderMeshBlobsList(); renderMeshPreview();
+  } else if (studio === 'wallpaper') {
+    const cols = moodColors(mood, 3);
+    wallpaperState.colors = [mixHex(cols[0], '#000000', 0.8), ...cols];
+    renderWallpaperColorsList();
+    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  }
+  if (typeof updateAuroraBackdrop === 'function') updateAuroraBackdrop();
+}
+const guideEl = {
+  overlay: document.getElementById('guideOverlay'),
+  step: document.getElementById('guideStep'),
+  title: document.getElementById('guideTitle'),
+  options: document.getElementById('guideOptions'),
+  back: document.getElementById('btnGuideBack'),
+  shuffle: document.getElementById('btnGuideShuffle'),
+  done: document.getElementById('btnGuideDone'),
+  skip: document.getElementById('btnGuideSkip'),
+};
+const guide = { step: 0, make: null, mood: null };
+function renderGuide() {
+  const g = guideEl;
+  g.overlay.classList.toggle('result', guide.step === 2);
+  g.overlay.querySelectorAll('.guide-progress i').forEach((bar, i) => bar.classList.toggle('done', i <= guide.step));
+  g.step.textContent = `Step ${guide.step + 1} of 3`;
+  g.back.hidden = guide.step === 0;
+  g.shuffle.hidden = guide.step !== 2;
+  g.done.hidden = guide.step !== 2;
+  g.skip.hidden = guide.step === 2;
+  g.options.innerHTML = '';
+  g.options.className = 'guide-options';
+  if (guide.step === 0) {
+    g.title.textContent = 'What are you making?';
+    GUIDE_MAKES.forEach(m => {
+      const b = document.createElement('button');
+      b.className = 'guide-option';
+      const sample = m.key === 'palette'
+        ? `linear-gradient(90deg, #ff6b9d 0 20%, #ffb02e 20% 40%, #22d3c5 40% 60%, #6d5dfc 60% 80%, #1c1830 80%)`
+        : m.key === 'mesh' ? 'radial-gradient(circle at 25% 30%, #ff6b9d, transparent 55%), radial-gradient(circle at 75% 70%, #22d3c5, transparent 55%), #6d5dfc'
+        : m.key === 'wallpaper' ? 'linear-gradient(160deg, #0f1020 20%, #6d5dfc 70%, #ff6b9d)' : 'linear-gradient(120deg, #6d5dfc, #ff6b9d)';
+      b.innerHTML = `<i style="background:${sample}"></i><b>${m.title}</b><small>${m.sub}</small>`;
+      b.addEventListener('click', () => { guide.make = m.key; guide.step = 1; setActiveTab(m.key); renderGuide(); });
+      g.options.appendChild(b);
+    });
+  } else if (guide.step === 1) {
+    g.title.textContent = 'Pick a mood';
+    g.options.classList.add('moods');
+    Object.entries(GUIDE_MOODS).forEach(([key, m]) => {
+      const b = document.createElement('button');
+      b.className = 'guide-option';
+      const cols = moodColors(key, 3);
+      b.innerHTML = `<i style="background:linear-gradient(120deg, ${cols.join(', ')})"></i><b>${m.title}</b>`;
+      b.addEventListener('click', () => {
+        guide.mood = key; guide.step = 2;
+        applyMoodTo(guide.make, key);
+        haptic(12);
+        renderGuide();
+      });
+      g.options.appendChild(b);
+    });
+  } else {
+    g.title.textContent = 'Here’s your first one';
+    const touch = window.matchMedia('(pointer: coarse)').matches;
+    const tips = document.createElement('ul');
+    tips.className = 'guide-tips';
+    const items = [];
+    items.push(touch ? '<b>Flick the preview</b> left for a new one, right to go back.' : '<b>Space</b> makes a new one, <b>⌘/Ctrl Z</b> goes back.');
+    if (guide.make === 'palette') items.push(`<b>${touch ? 'Long-press' : 'Right-click'} a color</b> to copy, lock or start a gradient from it.`);
+    else if (guide.make === 'wallpaper') items.push('<b>The phone icon on the preview</b> shows it on a device; Live/Static switches animation.');
+    else items.push('<b>⇆ on the preview</b> compares with the version before; <b>the phone icon</b> shows it on a device.');
+    items.push(touch ? '<b>Drag the grip</b> under the preview to make it bigger or smaller.' : '<b>⌘/Ctrl K</b> finds any action or theme by name.');
+    tips.innerHTML = items.map(t => `<li>${t}</li>`).join('');
+    g.options.className = '';
+    g.options.appendChild(tips);
+  }
+}
+function finishGuide() {
+  guideEl.overlay.hidden = true;
+  try { localStorage.setItem('gradii_onboarding_seen', '1'); } catch (e) { /* ignore */ }
+}
+function startGuidedFirstRun(force) {
+  let seen = false;
+  try { seen = localStorage.getItem('gradii_onboarding_seen') === '1'; } catch (e) { /* ignore */ }
+  if (seen && !force) return false;
+  // A shared link opens straight into someone's design — don't cover it.
+  if (!force && new URLSearchParams(location.search).get('d')) return false;
+  guide.step = 0; guide.make = null; guide.mood = null;
+  guideEl.overlay.hidden = false;
+  renderGuide();
+  const first = guideEl.options.querySelector('button');
+  if (first) first.focus({ preventScroll: true });
+  return true;
+}
+guideEl.skip.addEventListener('click', finishGuide);
+guideEl.done.addEventListener('click', () => { finishGuide(); showToast('Have fun'); });
+guideEl.back.addEventListener('click', () => { guide.step = Math.max(0, guide.step - 1); renderGuide(); });
+guideEl.shuffle.addEventListener('click', () => { applyMoodTo(guide.make, guide.mood); haptic(10); });
+guideEl.overlay.addEventListener('click', (e) => { if (e.target === guideEl.overlay && guide.step < 2) finishGuide(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !guideEl.overlay.hidden) finishGuide(); });
+
+/* ---- command palette: new entries ---- */
+[
+  { icon: '⇆', label: 'Compare with previous version', action: () => {
+    const btn = document.querySelector(`.compare-btn[data-compare="${activeTab}"]`);
+    if (btn) btn.click(); else showToast('Compare works in Gradient and Mesh');
+  } },
+  { icon: '▯', label: 'Show on a device (mockup)', action: () => {
+    if (['gradient', 'mesh', 'wallpaper'].includes(activeTab)) openMockup(activeTab); else showToast('Mockups work in Gradient, Mesh and Wallpaper');
+  } },
+  { icon: '✦', label: 'Guided start (3 steps)', action: () => startGuidedFirstRun(true) },
+  { icon: '❓', label: 'Feature tour', action: () => startOnboardingTour(true) },
+  { icon: '▤', label: 'New palette collection', action: () => { setActiveTab('palette'); setTimeout(() => { const add = document.querySelector('#collectionBar .collection-chip:last-child'); if (add) { add.scrollIntoView({ block: 'center' }); add.click(); } }, 250); } },
+  { icon: '〰', label: 'Haptics: turn on / off', action: () => setHaptics(!hapticsOn) },
+  ...['darkroom', 'paintchip', 'prism', 'specsheet', 'outline', 'aurora', 'bento', 'editorial', 'neon'].map(t => ({
+    icon: '◐', label: `Theme: ${THEME_LABEL[t]}`, action: () => {
+      if (!isThemeUnlocked(t)) { showToast(THEME_LABEL[t] + ' is a Pro theme — unlock for ₹39'); openProModal(); return; }
+      applyTheme(t);
+    },
+  })),
+].forEach(c => COMMANDS.push(c));
+const replayIdx = COMMANDS.findIndex(c => c.label === 'Replay onboarding tour');
+if (replayIdx >= 0) COMMANDS.splice(replayIdx, 1);
+if (window.matchMedia('(hover: none)').matches) {
+  const cmdBtn = document.getElementById('btnOpenCommandPalette');
+  cmdBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>';
+  cmdBtn.title = 'Search actions and themes';
+  cmdBtn.setAttribute('aria-label', 'Search actions and themes');
+}
+applyVoice();
+
 
 init();

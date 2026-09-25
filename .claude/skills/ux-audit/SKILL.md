@@ -1,207 +1,280 @@
 ---
 name: ux-audit
-description: Apply established UX/UI design laws and psychological principles when reviewing, auditing, or designing any part of Gradii's interface. Use this before and after any visual/UI change — new controls, layout changes, a new studio tab, onboarding flows, empty states — and whenever asked to review the app's UX, fix "this looks off/cluttered/cramped," or improve usability. Not for pure logic/backend changes with no visible UI surface.
+description: Design, review, or audit any part of Gradii's interface across phone, tablet and desktop — layout, navigation, controls, themes, copy voice, gestures, motion, onboarding, empty states. Use before and after any visible UI change, whenever asked to redesign or "make it easier/cleaner/more fun", and whenever something "looks off, cluttered, cramped, or broken on my phone/iPad". Not for pure logic changes with no visible surface.
 ---
 
-# UX audit — laws, principles, and how to actually apply them here
+# UX audit & design — how Gradii gets designed
 
-A condensed, deduplicated reference from six sources (listed at the bottom),
-built for auditing *this* app, not a general essay. ~40 named
-laws/principles collapse hard once you remove overlap — Laws of UX, a
-psychological-theories piece, a 15-principles roundup, and two "principles of
-good UX/UI" articles all cite mostly the same handful of ideas with different
-names. Organized below by what you're actually looking at, not by source.
+This is a working method, not an essay. It merges three things: the
+established UX laws (Laws of UX, Nielsen, Gestalt), platform guidance for
+building one web app that works on every device class (Material 3, Apple
+HIG, WCAG 2.2), and the concrete precedents this repo already paid for in
+real shipped bugs. Where a law and a real screenshot disagree, the
+screenshot wins.
 
-## How to use this, concretely
+## The loop (every time)
 
-1. **Look at the real thing first.** Screenshot the actual current UI
-   (desktop *and* mobile — 320/360/390px have all caught real bugs in this
-   app that desktop never showed) via Playwright against a local server,
-   the same way every other bug in this session's history got found —
-   never propose a fix from memory of what the markup "should" look like.
-2. **Walk the categories below**, not the raw 40-item list — ask each
-   category's question against the screenshot.
-3. **Fix what's genuinely broken**, not everything nameable. A principle
-   existing doesn't mean this app violates it. Only change what a real
-   screenshot shows is actually wrong, matching this project's standing
-   rule against scope creep.
-4. **Re-screenshot after the fix** and re-run the Playwright regression
-   suite (overflow checks across all tabs/themes/widths) before shipping.
+1. **Look at the real thing.** Screenshot it with Playwright against a
+   local server at the device matrix below, in more than one theme. Never
+   propose a fix from memory of what the markup "should" do — every CSS
+   cascade/stacking bug in this repo's history shipped because someone
+   reasoned instead of looked.
+2. **Name the user's goal on that screen in one sentence** ("make a
+   wallpaper for my phone and save it"). Everything is judged against that
+   sentence, not against a checklist.
+3. **Walk the sections below** and write down only what the screenshot
+   actually shows is wrong. A law existing doesn't mean the app violates it.
+4. **Diverge before converging when the change is big.** For a redesign or
+   a new surface, produce 2–4 genuinely different directions (different
+   worlds, not different shades) as a clickable preview and let the owner
+   choose *before* building. Small fixes skip this.
+5. **Fix, then re-screenshot and re-run the regression sweep** (overflow,
+   clipping, reachability) across every width × theme × studio before
+   shipping.
 
-## Visual hierarchy & grouping (Gestalt)
+## 1 · Device classes, not breakpoints-by-accident
 
-- **Proximity** — things placed near each other read as related; things far
-  apart read as unrelated. *Ask: does spacing alone already tell the user
-  which controls belong together, without reading labels?*
-- **Common Region** — a shared boundary (a card, a border) reads as a
-  group even more strongly than proximity alone. This app's `.control-card`
-  convention *is* this principle — one setting, one card, one shadow.
-- **Similarity** — same shape/color/size reads as "same kind of thing."
-  Inconsistent styling of otherwise-equivalent controls breaks this.
-- **Uniform Connectedness** — a visible connecting element (a line, a
-  shared background) reads as *more* related than proximity/similarity
-  alone — stronger than either on its own.
-- **Prägnanz** — people resolve ambiguous/complex visuals to the simplest
-  interpretation available. A messy layout won't be "read correctly," it'll
-  be read as whatever the simplest wrong shape looks like.
-- **Hierarchy** — size, weight, contrast, and position tell the user what
-  matters most and what to do next. *Ask: if someone glanced for one
-  second, what would their eye land on first — and is that the right
-  thing?* (This is what found Randomize buried under a wall of settings on
-  mobile — nothing marked it as more important than any toggle.)
-- **Contrast** — deliberate visual difference draws the eye to what's
-  actually important. Don't spend it on everything, or nothing stands out
-  (see Von Restorff below — overusing emphasis cancels the effect).
-- **Alignment** — a consistent grid/edge reads as ordered and
-  trustworthy; misaligned elements read as sloppy even when each one is
-  individually fine.
+Design three layouts on purpose — one app, three postures:
 
-## Cognitive load & decision-making
+| Class | Width | Navigation | Canvas & controls |
+|---|---|---|---|
+| Phone (compact) | < 600px | Bottom tab bar (5 destinations max, icon + label) | Pinned "stage" preview on top, settings scroll beneath it as a sheet; a grip resizes the stage |
+| Tablet (medium) | 600–1023px | Left navigation rail | Portrait (< 900px): pinned stage over inspector. Landscape (≥ 900px): stage + inspector side by side |
+| Desktop (expanded) | ≥ 1024px | Top tabs | Two columns, sticky preview, filmstrip, ⌘K |
 
-- **Hick's Law** — decision time grows with the number and complexity of
-  choices, not linearly. *Ask: can this list of options be pre-filtered,
-  grouped, or defaulted instead of shown flat?*
-- **Miller's Law / Working Memory** — people hold ~7±2 items in working
-  memory. Group long option lists into 5–9-item chunks (**Chunking**)
-  instead of one flat list.
-- **Choice Overload** — too many options at once doesn't just slow
-  people down, it can stop them choosing at all. A resolution picker with
-  9 options benefits from grouping (free vs. Pro, by device type) more
-  than a flat list.
-- **Cognitive Load** — every extra thing on screen costs real mental
-  effort. This is the direct principle behind "too much for the eye":
-  a screen with 8 undifferentiated toggle rows in 3 dense cards *is*
-  measurably higher cognitive load than 8 toggles each with a clear
-  boundary and breathing room, even though nothing else about the
-  underlying feature changed. Reducing *visual* density reduces
-  cognitive load even without removing a single feature.
-- **Progressive Disclosure** — show the minimum needed now, reveal more
-  as it becomes relevant. Advanced Mode's gate (hide advanced patterns
-  and controls until explicitly unlocked) is this principle already in
-  use — apply it again wherever a control only matters to a minority of
-  users.
-- **Occam's Razor / Tesler's Law** — cut every option/toggle that isn't
-  earning its complexity, but accept that some irreducible complexity is
-  real (a resolution picker for an image export tool can't be simpler
-  than "pick a size," it can only be organized better).
+Rules that make this hold:
 
-## Memory & attention
+- Breakpoints come from Material's window size classes (compact < 600,
+  medium 600–839, expanded ≥ 840) adjusted to where *this* layout actually
+  fits — verify the adjustment by measuring the narrowest real column, not
+  by feel (this repo's two-column split had to move from 768 to 900 after a
+  sweep showed mesh controls clipping at 267px).
+- Branch on **input capability**, not width, for input-specific UI:
+  `(hover: none)` / `(pointer: coarse)` hide keyboard-shortcut furniture and
+  show gesture hints; `(pointer: fine)` hides gesture hints.
+- Any `grid-template-columns` track uses `minmax(0, 1fr)`, never bare `1fr`
+  (grid blowout). Any flexible text input in a flex row gets
+  `width: 0; min-width: 0`.
+- Respect safe areas: fixed bars add `env(safe-area-inset-*)` to their own
+  padding; sticky things use `top: env(safe-area-inset-top)`.
+- Anything drawn to a `<canvas>` must re-measure with a `ResizeObserver`,
+  not at click time — a canvas measured while its panel was still
+  `display: none` rendered at the default 300×150 for months.
+- Fixed/sticky chrome must not sit inside a transformed ancestor (any
+  non-`none` transform creates a containing block and a stacking context).
+  Put bottom bars/rails at body level; give overlays their own z-index
+  above them; cap long dropdowns so they stop short of a bottom bar.
+- Inputs use `font-size: 16px` on phones (prevents iOS zoom on focus).
 
-- **Von Restorff Effect / Isolation Effect** — the one element that looks
-  different from its neighbors is the one people remember and notice.
-  This is *why* a distinct, full-width, colored Randomize button works
-  once — and why making six buttons all "stand out" makes none of them
-  stand out.
-- **Serial Position Effect** — first and last items in a list/row are
-  remembered best; middle items get lost. Put the most important tab,
-  nav item, or menu entry at an edge, not buried in the middle.
-- **Selective Attention** — people filter out anything that doesn't look
-  relevant to their current goal. A control that matters but looks like
-  background noise (same weight/color as everything else) effectively
-  doesn't exist to a scanning user.
-- **Zeigarnik Effect** — unfinished tasks are remembered better than
-  finished ones; progress indicators exploit this on purpose (e.g. the
-  onboarding tour's "Step 3 of 6").
-- **Peak-End Rule** — people judge a whole experience by its most
-  intense moment and how it ended, not the average. The moment right
-  after a Randomize/export action, and the very last thing shown before
-  leaving a flow, matter disproportionately more than the middle.
+## 2 · Reach, targets and effort (Fitts)
 
-## Consistency & predictability
+- **Touch targets ≥ 44×44 CSS px** for anything primary (Apple HIG 44pt,
+  WCAG 2.5.5 AAA 44px); never below **24×24** with spacing (WCAG 2.2
+  SC 2.5.8, AA). Check with `offsetWidth/offsetHeight`, not
+  `getBoundingClientRect` — an in-flight bounce animation scales the rect.
+- **Thumb zone:** most phone use is one-handed; the bottom third is the
+  easy zone. Navigation and the primary action live there or within one
+  scroll of it — never only at the top of a long phone page.
+- **One primary action per screen**, full-width on phones, visually unique
+  (Von Restorff). If six things "stand out", none do.
+- Object-level actions (fullscreen, compare, show-on-device) sit **on the
+  object** (the stage), not as more buttons in the settings list.
 
-- **Jakob's Law** — people expect *this* app to work like every other
-  app they already know. Novel interaction patterns need a very good
-  reason; a settings toggle, a share button, a color picker should look
-  and act like the ones people already know from elsewhere.
-- **Consistency** — the same control type should look and behave
-  identically everywhere it appears in this app specifically (a "1
-  setting = 1 card" convention, once established, should hold
-  everywhere — a lone exception is what makes a screen look broken
-  rather than just different).
-- **Mental Model** — users act on their *assumption* of how something
-  works, not how it actually works. If a resolution picker's "My Screen"
-  doesn't visibly show what it resolved to, people can't tell whether
-  their mental model ("this downloads at my screen's size") matches
-  reality — which is exactly what the resolution-hint feature exists to
-  close.
-- **Postel's Law** — accept input liberally (tolerate messy/varied user
-  input), respond precisely (give specific, unambiguous feedback back).
+## 3 · Hierarchy, grouping, and what the eye sees first (Gestalt)
 
-## Feedback & performance
+- Ask: if someone glanced for one second, where does the eye land — and
+  is that the right thing? On a design tool it should be the artwork, then
+  the primary action, then everything else.
+- **Proximity / Common Region:** one setting, one card. Group several
+  under one card only when they share one real explanation, with real
+  spacing between rows.
+- **Similarity / Consistency:** equivalent controls look identical in every
+  studio. A lone exception reads as a bug, not a variant.
+- **Alignment:** one edge per column. Misalignment reads as sloppiness even
+  when every element is individually fine.
+- **Not everything is a card.** Spend borders, fills and shadows on what
+  needs to be lifted.
 
-- **Doherty Threshold** — keep response time under ~400ms or perceived
-  productivity drops; if something must take longer, show real progress,
-  don't just leave the UI silent.
-- **Fitts's Law** — time-to-hit a target depends on its size and distance.
-  Primary actions (Randomize, the main CTA) should be bigger and closer
-  than secondary ones, not the same size crammed into the same row.
-- **Goal-Gradient Effect** — motivation increases as a visible goal gets
-  closer (a near-full progress bar pulls harder than an empty one).
-- **Flow** — full immersion happens when challenge matches skill and
-  feedback is immediate; constant interruptions (unnecessary modals,
-  slow feedback) break it.
+## 4 · Cognitive load & choice
 
-## Trust, control & accessibility
+- **Hick / Choice overload:** long option lists get chunked into labelled
+  groups of ≤ 7 (the theme menu: Studio looks / Classic / Pro).
+- **Progressive disclosure:** show what most people need now; advanced and
+  Pro options appear when asked for (Advanced Mode, "More options").
+- **Tesler:** some complexity is irreducible (an export tool needs sizes) —
+  organise it, don't pretend it away. **Occam / Parkinson:** every control
+  must earn its space; settings panels grow unless something prunes them.
+- **Smart defaults over questions:** save into the collection that's open,
+  size exports to "My Screen", start each launch on a fresh random design.
 
-- **User Control** — always give a clear, discoverable way to undo,
-  cancel, or reverse a mistake (this app's per-studio undo/redo is this
-  principle already shipped).
-- **Accessibility** — contrast ratios, keyboard navigation, alt text,
-  and assistive-tech compatibility aren't optional polish — CLAUDE.md's
-  own WCAG section already encodes this for this app specifically.
-- **Usability** — measured by learnability, efficiency, memorability,
-  error recovery, and satisfaction — not by whether a feature exists,
-  but by whether someone can actually complete the task with it.
-- **Aesthetic-Usability Effect** — a more polished-looking design gets
-  *perceived* as more usable even before anyone interacts with it, and
-  makes people more forgiving of small real friction. This cuts both
-  ways: a cluttered screen gets penalized beyond its literal usability
-  cost.
-- **User-Centricity / Context** — design from what the user is actually
-  trying to do and the real conditions they're in (one-handed on a
-  phone in bad light beats "looks good on a 27" monitor at a desk").
+## 5 · Feedback, motion and flow
 
-## Scope & effort
+- **Response limits (Nielsen):** < 100ms feels instant (taps, toggles,
+  slider drags must render in-frame); < 1s keeps flow (tab switches,
+  generation); > 1s needs visible progress; > 10s needs a way out.
+- **Motion budget:** 100–200ms for small state changes, 200–350ms for
+  panels/sheets; ease-out on enter, ease-in on exit; no bounce on anything
+  the user is about to operate. Staggered reveals only for content being
+  *read* (swatch grids), never for a menu about to be tapped.
+- **`prefers-reduced-motion`** is checked for every animation (captured
+  once as `prefersReducedMotion` in `animations.js`).
+- **Peak-end:** the moment right after Randomize/Export and the last thing
+  a flow shows are what people remember — make the result the hero, and
+  confirm saves with *where* it went ("Saved to Pictures/Gradii").
+- **Haptics confirm, never inform:** a short `navigator.vibrate` on
+  generate, lock, snap, save — always paired with something visible
+  (iOS Safari ignores vibrate). Android needs the VIBRATE permission.
+- **Flow:** no modal that isn't necessary; a first-run flow ends on a real
+  result, not on a tour of controls (Paradox of the Active User — people
+  start doing before they read).
 
-- **Pareto Principle** — a small fraction of features/paths account for
-  most real usage; give that fraction the most design attention and the
-  best defaults (e.g. a sensible default resolution/option instead of
-  making everyone choose every time).
-- **Parkinson's Law** — a task or flow expands to fill whatever space/time
-  it's given; an unconstrained settings panel will keep growing unless
-  something actively prunes it.
-- **Paradox of the Active User** — people start using something
-  immediately instead of reading instructions first; the UI itself has to
-  teach, since most people never will read a manual.
-- **Cognitive Bias** — people's snap judgments about a design are
-  systematically skewed (first impressions, anchoring on the first price/
-  option seen, etc.) — worth remembering when interpreting one person's
-  quick reaction to a screenshot as if it were a lab result.
+## 6 · Gestures & interactivity
 
-## Applying this to Gradii specifically
+- A gesture is an **accelerator, never the only door**: every flick,
+  long-press or drag has a visible button/menu equivalent
+  (flick ← → = Randomize / Undo; long-press = right-click = color menu).
+- Teach gestures **in place** (a short hint by the grip on touch devices,
+  one line in the first-run result), not in a manual.
+- Don't let a gesture fight an existing drag: disambiguate by velocity and
+  direction (flick = > 60px in < 350ms, mostly horizontal) and restore
+  whatever the slower drag already changed.
+- Long-press ≈ 450–500ms with a visible "pressing" response, cancelled by
+  > 10px movement; suppress the click that follows it.
+- Interactive previews beat static ones: compare-before/after, drag on
+  the canvas, show-on-device mockups — they let people *see* the effect of
+  a choice instead of imagining it.
 
-Precedent already in this codebase, worth reusing rather than re-deriving:
-- One control-card per setting is the established convention (Common
-  Region + Consistency) — multiple unrelated toggles sharing a card is a
-  violation, not a variant, *unless* they share one real intro/explainer
-  (then Proximity + Uniform Connectedness argue for grouping them, with
-  real spacing between rows — not for splitting).
-- The primary action per studio (Randomize) deserves Fitts's Law + Von
-  Restorff treatment: full-width, high-contrast, positioned before
-  secondary actions and before settings — on mobile *and* desktop, not
-  just desktop where there happens to be room.
-- Empty states (no image uploaded, no saved palettes yet) should be
-  designed as a real state, not left as accidental dead space — Prägnanz
-  and Aesthetic-Usability both predict an empty-looking screen reads as
-  broken, not "correctly showing nothing yet."
-- Advanced/Pro-gated features follow Progressive Disclosure already
-  (hidden until unlocked) — keep extending that pattern rather than
-  exposing every option to every user by default.
+## 7 · Voice & copy (words are design material)
+
+- Write from the user's side: name things by what people recognise
+  ("Save to Photos", not "Export blob"). A button says what happens; the
+  confirmation says that it happened and where.
+- Errors say what went wrong and how to fix it. No apologies, no vagueness.
+- **Voice is part of a theme's identity** (Darkroom precise, Paint Chip
+  friendly, Prism playful, Spec Sheet minimal) but voice never changes
+  facts: sizes, limits, errors and prices read the same in every voice.
+  Route generic confirmations through one choke point (`voiceToast`) so
+  call sites stay voice-agnostic.
+- Keep hint copy short enough to fit its space at 320px; if it wraps to
+  two lines in a one-line slot, rewrite it rather than shrink it.
+
+## 8 · Accessibility & trust
+
+- Contrast is math, not a vibe (WCAG 1.4.3): 4.5:1 normal text, 3:1 large
+  (≥ 18pt / 14pt bold) and UI boundaries. Check every theme's muted text
+  and every colored primary label — e.g. a paint-chip red had to darken to
+  `#c8321a` to carry white text at 4.5:1. When text sits on user colors,
+  pick the ink with the better worst-case contrast across the whole fill.
+- State never by color alone (active nav = pill shape + color + weight).
+- Visible `:focus-visible` on everything interactive; keyboard paths for
+  sliders (arrow keys) and menus (Esc closes).
+- `hidden` + a class `display` rule: the global
+  `[hidden] { display: none !important }` covers it — don't re-solve per
+  component.
+- User control: undo everywhere, confirm or undo destructive actions, and
+  never trap anyone in a flow (Skip, Esc, outside-tap all exit).
+- Accessibility features are never paywalled (High Contrast is free).
+
+## 9 · Creativity — making it distinct, not just correct
+
+Laws keep a design from failing; they don't make it memorable. For any new
+surface or visual direction:
+
+- **Ground it in a real world** the subject belongs to — a photo darkroom,
+  a hardware-store paint chip, a spec sheet, a prism — and borrow its
+  materials, vocabulary and one signature detail (crop marks, a named chip
+  card, italic spec labels, a button that "wears" the user's colors).
+- **One signature per theme**, spent where it matters (the primary, the
+  stage frame) — not decoration sprinkled everywhere.
+- **Avoid the AI-default looks** unless asked: cream + serif + terracotta,
+  near-black + one acid accent, purple→blue hero gradient, Inter/Space
+  Grotesk everywhere, emoji as section markers, everything centered and
+  `rounded-lg`.
+- **Type pairs carry a theme:** a display face with character plus a mono
+  or numeric face for values; load non-default fonts lazily per theme.
+- **Let the artwork be the loudest color.** Chrome recedes (Darkroom,
+  Spec Sheet hide the brand orbs) so the user's colors read true.
+- Show the owner real, interactive previews of directions on all three
+  device classes before building — cheaper to change a preview than a
+  shipped app.
+
+## 10 · Logic check — no fallacies in the reasoning
+
+Before shipping a design decision, check the argument, not just the pixels:
+
+- **Appeal to authority:** "Hick's Law says…" doesn't prove *this* screen
+  has a problem. Show the screenshot or measurement that does.
+- **Hasty generalisation / anecdote:** one quick reaction to a screenshot
+  isn't a study — but the owner's stated taste *is* a requirement. Keep the
+  two apart: follow the owner's preference; don't dress it up as a
+  universal law.
+- **Post hoc:** "it looks fixed after my change" — reproduce the bug
+  before the fix and show it gone after, at the same width/theme.
+- **Sampling bias / survivorship:** testing only desktop Chrome in the
+  default theme. The matrix below exists because 320px, iPad, and
+  non-default themes each caught bugs desktop never showed.
+- **False dilemma:** "dense or sparse", "hide it or show it" — there is
+  usually a third option (progressive disclosure, a sheet, a grip).
+- **Begging the question:** "users want X because X is modern." State the
+  user goal it serves or drop it.
+- **Sunk cost:** a feature isn't kept because it was expensive to build;
+  it's kept if it earns its space (this repo removed the Text Contrast
+  Checker and the bento grid on exactly that basis).
+- **Nirvana fallacy:** don't block a clear improvement for a perfect one.
+- **Product-logic consistency** (the other kind of fallacy — contradictions
+  in the UI itself):
+  - every state has a way out (Esc, Skip, Back, outside tap);
+  - every gesture has a visible equivalent;
+  - a control's effect is visible, or it says what it did (mental model);
+  - the same word means the same thing everywhere; the same action has
+    the same name in every studio;
+  - defaults are consistent (a Pro-only control never *looks* enabled for
+    a free user; a shared link is never covered by onboarding);
+  - randomness is actually random per launch (the Android WebView repeated
+    `Math.random` sequences across cold starts — seed from
+    `crypto.getRandomValues`);
+  - "Download" means the file lands in storage; Share is a separate,
+    optional path.
+
+## 11 · Test matrix (what "verified" means here)
+
+- Widths: 320, 360, 390 (phones) · 600, 768, 820 (tablet portrait) ·
+  1024, 1180 (tablet landscape / small laptop) · 1440 (desktop).
+- Every theme (11) × every studio (5), Pro unlocked so gated UI renders.
+- Per combination: no page overflow; no card whose `scrollWidth` exceeds
+  its `clientWidth`; nav buttons reachable via `document.elementFromPoint`;
+  the visible primary ≥ 44px tall.
+- Real interactions, not "the listener ran": touch flicks via CDP
+  `Input.dispatchTouchEvent`, long-press with a held touch, actual taps on
+  overlays. `hasTouch` contexts matter — some bugs only appear with them.
+- Screenshots of at least phone + tablet + desktop in two contrasting
+  themes, looked at, before calling it done.
+
+## Precedents already in this codebase
+
+- Stacking contexts: `.topbar` has its own `position: relative; z-index: 50`
+  because a GSAP identity transform once trapped a dropdown behind the
+  preview. Don't out-number a broken stacking context.
+- Theme-scoped overrides use `:not(.exception)` on the broad rule rather
+  than hoping source order wins; compute specificity, don't eyeball it.
+- OKLCH → hex: reduce chroma only (never L or H) until in gamut.
+- One control-card per setting; grouped cards only with a shared intro.
+- Primary per studio gets full width and a unique look, on every width.
+- Empty states are designed states (centered, with a clear next step).
+- Advanced/Pro features follow progressive disclosure: visible, and an
+  unlicensed attempt reverts + toast + Pro modal.
 
 ## Sources
 
-- https://lawsofux.com — the 30-law reference most of this maps back to
-- https://dev.to/ucscmozilla/5-psychological-theories-that-are-used-in-ui-ux-design-4kgl
-- https://pathumpmgux.medium.com/15-user-experience-principles-and-theories-80f19877bd5
-- https://www.figma.com/resource-library/ui-design-principles/
-- https://www.uxdesigninstitute.com/blog/ux-design-principles-2026/
+- Laws of UX — https://lawsofux.com
+- Material 3 window size classes — https://m3.material.io/foundations/layout/applying-layout/window-size-classes
+- Material 3 navigation bar / rail — https://m3.material.io/components/navigation-bar/overview · https://m3.material.io/components/navigation-rail/overview
+- Material 3 motion (easing & duration) — https://m3.material.io/styles/motion/easing-and-duration
+- Apple HIG, layout & touch targets — https://developer.apple.com/design/human-interface-guidelines/layout
+- WCAG 2.2 target size (minimum) — https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html
+- WCAG 2.1 contrast (minimum) — https://www.w3.org/TR/WCAG21/#contrast-minimum
+- Nielsen, response time limits — https://www.nngroup.com/articles/response-times-3-important-limits/
+- Hoober, how people hold phones — https://www.uxmatters.com/mt/archives/2013/02/how-do-users-really-hold-mobile-devices.php
+- MDN, `pointer` / `hover` media features — https://developer.mozilla.org/en-US/docs/Web/CSS/@media/pointer
+- web.dev, responsive design basics — https://web.dev/articles/responsive-web-design-basics
+- Earlier sources merged into this skill: dev.to "5 psychological theories", pathumpmgux "15 UX principles", Figma UI design principles, UX Design Institute principles 2026.

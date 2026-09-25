@@ -171,9 +171,23 @@ from memory is exactly how the bugs above shipped in the first place.
 ## Android build
 
 Capacitor project lives outside this repo (scratchpad, gitignored by
-convention). To rebuild the APK: copy `index.html`/`style.css`/`app.js`/
+convention), but its hand-written native pieces are mirrored in
+`android-native/` — `MainActivity.java` (plugin registration),
+`WallpaperSetterPlugin.java`, `DeviceSaverPlugin.java` (saves exports
+straight into Pictures/Movies/Download › Gradii via MediaStore, so
+"Download" never falls back to the Share sheet) and `AndroidManifest.xml`
+(VIBRATE for haptics, WRITE_EXTERNAL_STORAGE capped at SDK 28). When
+recreating the Capacitor project, copy these into
+`android/app/src/main/` first. To rebuild the APK: copy `index.html`/`style.css`/`app.js`/
 `animations.js` into that project's `www/`, `npx cap sync android`,
 `./gradlew assembleDebug --no-daemon --max-workers=1` (max-workers=1
 avoids Maven Central 429 rate-limiting), then `apksigner verify
 --print-certs` before shipping. Copy the resulting APK back to
 `Gradii.apk` at the repo root.
+
+## Randomness
+
+`Math.random` is replaced at the top of `app.js` by an sfc32 generator
+seeded from `crypto.getRandomValues` — the Android WebView was repeating
+the same sequence on every cold start (same colors every launch). Keep
+new random code on `Math.random`; it's already covered.

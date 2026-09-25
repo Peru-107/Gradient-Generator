@@ -121,6 +121,25 @@ selected reverts to Flowing Mesh.
 68. **Different wallpaper for lock screen vs. home screen** — needs the app to actually be a native `android.service.wallpaper.WallpaperService` distinguishing `FLAG_LOCK`/`FLAG_SYSTEM`; this app isn't one at all today (Wallpaper Studio generates/exports images and an HTML file, it doesn't register as a system wallpaper engine) — a much larger native Android undertaking than anything else built in this backlog.
 69. **Ambient light sensor** — Chrome/Android WebView's `AmbientLightSensor` API is deprecated/restricted for the same fingerprinting reasons as the Battery API and essentially never fires on real devices today; shipping a toggle for it would be dead code giving a false impression of a working feature, so it was left out rather than added as a silent no-op.
 
+## Phase 6 — 2026 redesign (phone, tablet, desktop)
+
+Chosen from an interactive preview of four directions; all four shipped as themes, each with its own copy voice.
+
+70. ✅ **Done** — **Four "studio look" themes** — Darkroom (dark, amber safelight, crop marks, precise voice), Paint Chip (white, square, named color chips, friendly voice), Prism (frosted glass, the primary button wears your current colors, playful voice), Spec Sheet (monochrome grid, italic serif labels, minimal voice). Fonts load lazily per theme. Free, not Pro.
+71. ✅ **Done** — **Copy voice per theme** — buttons, empty states and generic toasts re-voiced; facts (sizes, limits, errors, prices) never change.
+72. ✅ **Done** — **Device-class layouts** — phone: bottom tab bar + pinned preview "stage" with a resize grip; tablet: left navigation rail, stacked in portrait, side-by-side in landscape; desktop: top tabs as before.
+73. ✅ **Done** — **Flick the preview** — ← new design, → back (undo), touch only; buttons still do the same.
+74. ✅ **Done** — **Long-press (or right-click) a palette color** — copy HEX/RGB, lock, or start a gradient from it.
+75. ✅ **Done** — **Haptics** — short vibrations confirming generate/lock/snap/save on Android; toggle in ⌘K.
+76. ✅ **Done** — **Compare slider** — before/after with the previous version, on the Gradient and Mesh stage.
+77. ✅ **Done** — **Device mockups** — show the current gradient/mesh/wallpaper on a phone, tablet or laptop and download it as a PNG (or share it).
+78. ✅ **Done** — **Palette collections** — named groups for saved palettes; saving while a collection is open files it there.
+79. ✅ **Done** — **Guided first run** — what you're making → a mood → your first design, live in the studio, with the gestures worth knowing. The old tour is still in ⌘K.
+80. ✅ **Done** — **Color names** — every palette color gets a human name (Harbor, Marigold, Dusk Plum…).
+81. ✅ **Done** — **⌘K additions** — every theme, compare, mockup, guided start, new collection, haptics. On touch devices the ⌘ button becomes a search button.
+82. ✅ **Done** — **APK: real save to phone storage** — exports go straight into Pictures/Movies/Download › Gradii through a native MediaStore plugin (DeviceSaver) instead of the Share sheet.
+83. ✅ **Done** — **Different colors every launch** — per-launch crypto-seeded randomness (the Android WebView was repeating the same `Math.random` sequence), and the app opens on a fresh random design instead of the same violet→pink every time.
+
 ## The big one
 
 49. **Community gallery** (Supabase-backed) — browse, like, and remix other users' saved designs. The one feature here that's a real backend build, not a static-app addition — deliberately sequenced after everything else, per earlier discussion.
