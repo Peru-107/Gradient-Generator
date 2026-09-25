@@ -453,7 +453,7 @@ function setActiveTab(tab) {
   const toPanel = document.getElementById('panel-' + tab);
   animateTabSwitch(fromPanel === toPanel ? null : fromPanel, toPanel);
   if (tab === 'wallpaper') activateWallpaperTab();
-  else stopWallpaperAnimation();
+  else { if (typeof exitObjectEdit === 'function' && wpEdit.on) exitObjectEdit(); stopWallpaperAnimation(); }
   if (typeof closeCompare === 'function') closeCompare();
   updateAuroraBackdrop();
 }
@@ -2528,28 +2528,6 @@ function wpHexToRgba(hex, alpha) {
   return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
 }
 
-function wpDrawFlowingMesh(ctx, w, h, t, colors, speed) {
-  const bg = colors[0] || '#0f1020';
-  const blobs = colors.length > 1 ? colors.slice(1) : colors;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
-  blobs.forEach((color, i) => {
-    const n = blobs.length;
-    const phase = (i / n) * Math.PI * 2;
-    const cx = w * (0.5 + 0.32 * Math.sin(t * speed * 0.6 + phase));
-    const cy = h * (0.5 + 0.32 * Math.cos(t * speed * 0.5 + phase * 1.3));
-    const r = Math.max(w, h) * (0.35 + 0.08 * Math.sin(t * speed + i));
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-    grad.addColorStop(0, color);
-    grad.addColorStop(1, wpHexToRgba(color, 0));
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-  });
-  ctx.globalCompositeOperation = 'source-over';
-}
-
 function wpDrawAuroraFlow(ctx, w, h, t, colors, speed) {
   const bg = colors[0] || '#04070f';
   const bands = colors.length > 1 ? colors.slice(1) : colors;
@@ -2974,7 +2952,8 @@ function wpDrawSub(ctx, img, sx, sy, sw, sh, dx, dy, dw, dh) {
   ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
 }
 function wpRoundRect(ctx, x, y, w, h, r) {
-  r = Math.min(r, w / 2, h / 2);
+  w = Math.max(0, w); h = Math.max(0, h);
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -3040,102 +3019,177 @@ function wpGlow(ctx, w, h, amount) {
   ctx.restore();
 }
 
-/* ---- glass: frosted panes, fluted/reeded, liquid drops, prism light ----
+/* ---- glass: frosted panes, fluted/reeded, liquid drops ----
    Each works on whatever is already on ctx (it copies it first), so the
    same functions serve as wallpaper styles (over a moving color field)
    and as effects over a gradient or mesh. p holds 0–1 knobs. */
+/* ---- scene objects ----
+   Panes, drops, orbs, color blobs, ink clouds, bokeh and sparkles are all
+   "objects": {kind, x, y (0–1 of the canvas), s (size), ar (panes:
+   height/width), r (rotation), c (palette index), ph/sp (drift phase and
+   speed), pin}. By default a style generates them from its seed; once you
+   move one in the editor, that kind's list is stored in the wallpaper
+   state and drawn from there. Unpinned objects drift near their spot;
+   pinned ones stay exactly where they were put. */
+const WP_OBJ_KINDS = {
+  pane:    { label: 'Glass pane',  amp: 0.03, fx: 0.21, fy: 0.17, base: 'min', shape: 'rect' },
+  fxpane:  { label: 'Glass pane',  amp: 0.03, fx: 0.21, fy: 0.17, base: 'min', shape: 'rect' },
+  drop:    { label: 'Bubble',      amp: 0.08, fx: 0.21, fy: 0.17, base: 'min', shape: 'circle' },
+  fxdrop:  { label: 'Bubble',      amp: 0.08, fx: 0.21, fy: 0.17, base: 'min', shape: 'circle' },
+  orb:     { label: 'Orb',         amp: 0.08, fx: 0.12, fy: 0.1,  base: 'min', shape: 'circle' },
+  blob:    { label: 'Color blob',  amp: 0.3,  fx: 0.6,  fy: 0.5,  base: 'max', shape: 'circle' },
+  cloud:   { label: 'Ink cloud',   amp: 0.14, fx: 0.07, fy: 0.06, base: 'min', shape: 'circle' },
+  bokeh:   { label: 'Bokeh light', amp: 0.04, fx: 0.15, fy: 0.12, base: 'min', shape: 'circle' },
+  sparkle: { label: 'Sparkle',     amp: 0.01, fx: 0.3,  fy: 0.25, base: 'min', shape: 'circle' },
+};
+let wpFreezeObjects = false; // the editor draws objects exactly on their anchors
+function wpObjBase(o, w, h) { return (WP_OBJ_KINDS[o.kind] || {}).base === 'max' ? Math.max(w, h) : Math.min(w, h); }
+function wpObjAt(o, T, w, h) {
+  const k = WP_OBJ_KINDS[o.kind] || WP_OBJ_KINDS.drop;
+  if (o.pin || wpFreezeObjects) return { x: o.x * w, y: o.y * h };
+  const ph = o.ph || 0, sp = o.sp || 1;
+  return {
+    x: (o.x + k.amp * Math.sin(T * k.fx * sp + ph)) * w,
+    y: (o.y + k.amp * Math.cos(T * k.fy * sp + ph * 1.3)) * h,
+  };
+}
+/* Seeded generators — the same seed always gives the same layout, so the
+   editor can take over exactly the objects already on screen. */
+const WP_OBJ_GEN = {
+  pane: (i, rnd, o) => ({ s: (0.32 + 0.4 * o.size) * (0.7 + 0.6 * rnd(i * 7 + 1)), ar: 0.6 + 0.9 * rnd(i * 7 + 2), x: 0.12 + 0.76 * rnd(i * 7 + 3), y: 0.1 + 0.8 * rnd(i * 7 + 4), r: (rnd(i * 7 + 5) - 0.5) * 0.7 }),
+  drop: (i, rnd, o) => ({ s: (0.05 + 0.13 * o.size) * (0.55 + 0.9 * rnd(i * 5 + 1)), x: 0.08 + 0.84 * rnd(i * 5 + 2), y: 0.08 + 0.84 * rnd(i * 5 + 3) }),
+  orb: (i, rnd, o) => ({ s: (0.04 + 0.14 * o.size) * (0.45 + rnd(i * 4 + 1)), x: 0.1 + 0.8 * rnd(i * 4 + 2), y: 0.1 + 0.8 * rnd(i * 4 + 3), c: i }),
+  blob: (i, rnd, o) => ({ s: (0.28 + 0.2 * o.size) * (0.85 + 0.3 * rnd(i * 3 + 1)), x: 0.5 + (rnd(i * 3 + 2) - 0.5) * 0.25, y: 0.5 + (rnd(i * 3 + 3) - 0.5) * 0.25, c: i }),
+  cloud: (i, rnd, o) => ({ s: (0.05 + 0.2 * o.size) * (0.5 + rnd(i * 6 + 3)), x: 0.5 + (rnd(i * 6 + 8) - 0.5) * 0.7, y: 0.5 + (rnd(i * 6 + 9) - 0.5) * 0.7, r: rnd(i * 6 + 1) * 6.283, c: i }),
+  bokeh: (i, rnd, o) => ({ s: (0.025 + 0.1 * o.size) * (0.4 + rnd(i * 5 + 1)), x: rnd(i * 5 + 2), y: rnd(i * 5 + 3), c: i }),
+  sparkle: (i, rnd, o) => ({ s: (0.02 + 0.06 * o.size) * (0.35 + rnd(i * 5 + 1)), x: 0.05 + 0.9 * rnd(i * 5 + 2), y: 0.05 + 0.9 * rnd(i * 5 + 3) }),
+};
+WP_OBJ_GEN.fxpane = WP_OBJ_GEN.pane;
+WP_OBJ_GEN.fxdrop = WP_OBJ_GEN.drop;
+function wpGenObjects(kind, n, size, seed) {
+  const rnd = wpHashFn(String(seed || 'gradii') + ':' + kind);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(Object.assign({ kind, ph: rnd(i * 13 + 90) * 6.283, sp: 0.6 + 0.8 * rnd(i * 13 + 91), pin: false, r: 0, ar: 1, c: i }, WP_OBJ_GEN[kind](i, rnd, { size })));
+  }
+  return out;
+}
+/* The objects of one kind to draw: the stored (edited) list if there is
+   one, otherwise the seeded default. */
+function wpObjects(env, kind, n, size) {
+  const stored = env && env.objects && env.objects[kind];
+  return Array.isArray(stored) ? stored : wpGenObjects(kind, n, size, env && env.seed);
+}
+
+/* ---- glass ---- */
 function wpIsLightHex(hex) {
   const { r, g, b } = hexToRgb(hex || '#000000');
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.6;
 }
-function wpGlassPanes(ctx, w, h, T, p, rnd, amount) {
+/* Frosted panes: soft shadow, frosted (blurred + slightly refracted)
+   inside, a diagonal sheen, fine frost grain, and a bevel that's bright
+   on the lit top-left edge and darker on the bottom-right. */
+function wpDrawPanes(ctx, w, h, T, objs, soft, amount) {
+  if (!objs.length) return;
   const m = Math.min(w, h);
   const base = wpCopyOf('panes', ctx.canvas, w, h);
-  const blurred = wpBlurred('panesBlur', base, w, h, 0.015 + 0.05 * p.softness);
-  const n = 2 + Math.round(p.density * 4);
-  for (let i = 0; i < n; i++) {
-    const pw = m * (0.32 + 0.4 * p.size) * (0.7 + 0.6 * rnd(i * 7 + 1));
-    const ph = pw * (0.6 + 0.9 * rnd(i * 7 + 2));
-    const cx = w * (0.12 + 0.76 * rnd(i * 7 + 3)) + Math.sin(T * 0.25 + i) * m * 0.05;
-    const cy = h * (0.1 + 0.8 * rnd(i * 7 + 4)) + Math.cos(T * 0.2 + i * 1.7) * m * 0.05;
-    const rot = (rnd(i * 7 + 5) - 0.5) * 0.7 + Math.sin(T * 0.1 + i) * 0.05;
-    const r = Math.min(pw, ph) * 0.16;
+  const blurred = wpBlurred('panesBlur', base, w, h, 0.012 + 0.045 * soft);
+  objs.forEach(o => {
+    const { x: cx, y: cy } = wpObjAt(o, T, w, h);
+    const pw = o.s * m, ph = pw * (o.ar || 1);
+    const rot = (o.r || 0) + (o.pin || wpFreezeObjects ? 0 : Math.sin(T * 0.1 + (o.ph || 0)) * 0.04);
+    const r = Math.min(pw, ph) * 0.14;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(rot);
-    ctx.shadowColor = `rgba(0,0,0,${0.18 + 0.15 * amount})`;
-    ctx.shadowBlur = m * 0.045;
-    ctx.shadowOffsetY = m * 0.018;
+    ctx.shadowColor = `rgba(0,0,0,${0.14 + 0.14 * amount})`;
+    ctx.shadowBlur = m * 0.06;
+    ctx.shadowOffsetY = m * 0.022;
     wpRoundRect(ctx, -pw / 2, -ph / 2, pw, ph, r);
-    // Opaque fill only to cast the shadow — the inside is fully repainted
-    // below (a near-transparent fill would cast a near-invisible shadow).
     ctx.fillStyle = '#000';
     ctx.fill();
     ctx.shadowColor = 'transparent';
     ctx.clip();
-    ctx.rotate(-rot);
-    ctx.translate(-cx, -cy);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(base, 0, 0, w, h);
-    ctx.globalAlpha = 0.55 + 0.45 * amount;
-    ctx.drawImage(blurred, 0, 0, w, h);
+    ctx.globalAlpha = 0.65 + 0.35 * amount;
+    ctx.drawImage(blurred, -m * 0.012, -m * 0.008, w, h);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = `rgba(255,255,255,${0.06 + 0.1 * amount})`;
-    ctx.fillRect(0, 0, w, h);
+    wpGrain(ctx, w, h, 0.1 + 0.08 * amount, 0);
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    const sheen = ctx.createLinearGradient(-pw / 2, -ph / 2, pw / 2, ph / 2);
+    sheen.addColorStop(0, `rgba(255,255,255,${0.1 + 0.16 * amount})`);
+    sheen.addColorStop(0.45, 'rgba(255,255,255,0.03)');
+    sheen.addColorStop(0.55, 'rgba(255,255,255,0.07)');
+    sheen.addColorStop(1, 'rgba(255,255,255,0.1)');
+    ctx.fillStyle = sheen;
+    ctx.fillRect(-pw / 2, -ph / 2, pw, ph);
     ctx.restore();
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(rot);
     wpRoundRect(ctx, -pw / 2, -ph / 2, pw, ph, r);
-    const g = ctx.createLinearGradient(-pw / 2, -ph / 2, pw / 2, ph / 2);
-    g.addColorStop(0, 'rgba(255,255,255,0.7)');
-    g.addColorStop(0.45, 'rgba(255,255,255,0.06)');
-    g.addColorStop(1, 'rgba(255,255,255,0.35)');
-    ctx.strokeStyle = g;
-    ctx.lineWidth = Math.max(1, m * 0.003);
+    const bevel = ctx.createLinearGradient(-pw / 2, -ph / 2, pw / 2, ph / 2);
+    bevel.addColorStop(0, 'rgba(255,255,255,0.85)');
+    bevel.addColorStop(0.3, 'rgba(255,255,255,0.18)');
+    bevel.addColorStop(0.7, 'rgba(255,255,255,0.06)');
+    bevel.addColorStop(1, 'rgba(0,0,0,0.2)');
+    ctx.strokeStyle = bevel;
+    ctx.lineWidth = Math.max(1, m * 0.0035);
     ctx.stroke();
+    const inset = Math.max(1.5, m * 0.004);
+    if (pw > inset * 4 && ph > inset * 4) {
+      wpRoundRect(ctx, -pw / 2 + inset, -ph / 2 + inset, pw - inset * 2, ph - inset * 2, Math.max(0, r - inset));
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = Math.max(1, m * 0.0015);
+      ctx.stroke();
+    }
     ctx.restore();
-  }
+  });
 }
-function wpFlutedGlass(ctx, w, h, p, amount) {
+function wpFlutedGlass(ctx, w, h, size, depth, amount) {
   const base = wpCopyOf('fluted', ctx.canvas, w, h);
-  const rw = Math.max(4, w * (0.02 + 0.07 * p.size));
-  const squeeze = 1.5 + 2.5 * p.depth;
+  const rw = Math.max(4, w * (0.02 + 0.07 * size));
+  const squeeze = 1.5 + 2.5 * depth;
   ctx.save();
   for (let x = 0; x < w; x += rw) {
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, 0, rw + 0.5, h);
     ctx.clip();
-    // Each rib shows a squeezed, mirrored slice of what's behind it.
     ctx.translate(x + rw, 0);
     ctx.scale(-1, 1);
     const sx = x + rw / 2 - (rw * squeeze) / 2;
-    ctx.globalAlpha = 0.5 + 0.5 * amount;
+    ctx.globalAlpha = 0.55 + 0.45 * amount;
     wpDrawSub(ctx, base, sx, 0, rw * squeeze, h, 0, 0, rw, h);
     ctx.restore();
     const g = ctx.createLinearGradient(x, 0, x + rw, 0);
-    g.addColorStop(0, `rgba(0,0,0,${0.16 * amount})`);
-    g.addColorStop(0.3, `rgba(255,255,255,${0.16 * amount})`);
-    g.addColorStop(0.55, 'rgba(255,255,255,0)');
-    g.addColorStop(1, `rgba(0,0,0,${0.12 * amount})`);
+    g.addColorStop(0, `rgba(0,0,0,${0.18 * amount})`);
+    g.addColorStop(0.22, `rgba(255,255,255,${0.2 * amount})`);
+    g.addColorStop(0.32, `rgba(255,255,255,${0.06 * amount})`);
+    g.addColorStop(0.6, 'rgba(255,255,255,0)');
+    g.addColorStop(1, `rgba(0,0,0,${0.14 * amount})`);
     ctx.fillStyle = g;
     ctx.fillRect(x, 0, rw + 0.5, h);
   }
   ctx.restore();
 }
-function wpLiquidDrops(ctx, w, h, T, p, rnd, amount) {
+/* Glass bubbles: magnified view through the bubble, a darker inner edge,
+   a bright caustic where light focuses at the bottom, a crisp specular
+   highlight top-left and a thin rim with a faint color fringe. */
+function wpDrawDrops(ctx, w, h, T, objs, depth, amount) {
+  if (!objs.length) return;
   const m = Math.min(w, h);
   const base = wpCopyOf('drops', ctx.canvas, w, h);
-  const n = 3 + Math.round(p.density * 6);
-  const k = 1.3 + 0.5 * p.depth;
-  for (let i = 0; i < n; i++) {
-    const r = m * (0.07 + 0.14 * p.size) * (0.6 + 0.8 * rnd(i * 5 + 1));
-    const cx = w * (0.5 + 0.4 * Math.sin(T * 0.21 * (0.6 + rnd(i * 5 + 2)) + rnd(i * 5 + 3) * 6.28));
-    const cy = h * (0.5 + 0.42 * Math.cos(T * 0.17 * (0.6 + rnd(i * 5 + 4)) + i * 1.3));
+  const k = 1.3 + 0.6 * depth;
+  objs.forEach(o => {
+    const r = o.s * m;
+    const { x: cx, y: cy } = wpObjAt(o, T, w, h);
     ctx.save();
-    ctx.shadowColor = `rgba(0,0,0,${0.2 * amount})`;
-    ctx.shadowBlur = r * 0.35;
-    ctx.shadowOffsetY = r * 0.12;
+    ctx.shadowColor = `rgba(0,0,0,${0.12 + 0.16 * amount})`;
+    ctx.shadowBlur = r * 0.45;
+    ctx.shadowOffsetY = r * 0.16;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = '#000';
@@ -3144,98 +3198,314 @@ function wpLiquidDrops(ctx, w, h, T, p, rnd, amount) {
     ctx.clip();
     ctx.drawImage(base, 0, 0, w, h);
     wpDrawSub(ctx, base, cx - r / k, cy - r / k, (2 * r) / k, (2 * r) / k, cx - r, cy - r, 2 * r, 2 * r);
-    const edge = ctx.createRadialGradient(cx, cy, r * 0.55, cx, cy, r);
+    const edge = ctx.createRadialGradient(cx, cy - r * 0.1, r * 0.5, cx, cy, r);
     edge.addColorStop(0, 'rgba(0,0,0,0)');
-    edge.addColorStop(1, `rgba(0,0,0,${0.28 * amount})`);
+    edge.addColorStop(0.85, `rgba(0,0,0,${0.12 * amount})`);
+    edge.addColorStop(1, `rgba(0,0,0,${0.32 * amount})`);
     ctx.fillStyle = edge;
     ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r);
+    ctx.globalCompositeOperation = 'screen';
+    const caustic = ctx.createRadialGradient(cx, cy + r * 0.55, 0, cx, cy + r * 0.55, r * 0.5);
+    caustic.addColorStop(0, `rgba(255,255,255,${0.35 * amount})`);
+    caustic.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = caustic;
+    ctx.fillRect(cx - r, cy, 2 * r, r);
     ctx.restore();
-    const hx = cx - r * 0.35, hy = cy - r * 0.42;
-    const hl = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * 0.55);
-    hl.addColorStop(0, `rgba(255,255,255,${0.55 * amount + 0.15})`);
-    hl.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = hl;
+    // specular highlight: a soft glow plus a crisp crescent
+    const hx = cx - r * 0.36, hy = cy - r * 0.42;
+    const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * 0.55);
+    glow.addColorStop(0, `rgba(255,255,255,${0.35 + 0.3 * amount})`);
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = `rgba(255,255,255,${0.2 + 0.25 * amount})`;
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.rotate(-0.7);
+    ctx.fillStyle = `rgba(255,255,255,${0.55 + 0.35 * amount})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.2, r * 0.09, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
     ctx.lineWidth = Math.max(1, m * 0.0025);
+    ctx.strokeStyle = `rgba(255,255,255,${0.25 + 0.3 * amount})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - ctx.lineWidth / 2, Math.PI * 0.9, Math.PI * 1.9);
     ctx.stroke();
-  }
-}
-function wpPrismBeams(ctx, w, h, T, p, amount) {
-  const m = Math.min(w, h);
-  const buf = wpBuf('prism', w, h);
-  const bc = buf.getContext('2d');
-  bc.clearRect(0, 0, w, h);
-  const ox = w * (0.3 + 0.05 * Math.sin(T * 0.2)), oy = h * (0.42 + 0.04 * Math.cos(T * 0.17));
-  const base = (p.angle * 360 - 20 + Math.sin(T * 0.15) * 6) * Math.PI / 180;
-  const spread = (14 + 40 * p.size) * Math.PI / 180;
-  const far = Math.hypot(w, h) * 1.2;
-  bc.globalCompositeOperation = 'lighter';
-  // incoming white beam
-  bc.fillStyle = 'rgba(255,255,255,0.35)';
-  bc.beginPath();
-  bc.moveTo(ox, oy);
-  bc.lineTo(ox - far * Math.cos(base - 0.35), oy - far * Math.sin(base - 0.35) - m * 0.02);
-  bc.lineTo(ox - far * Math.cos(base - 0.35), oy - far * Math.sin(base - 0.35) + m * 0.02);
-  bc.closePath();
-  bc.fill();
-  // outgoing spectrum fan
-  const bands = 7;
-  for (let k = 0; k < bands; k++) {
-    const a0 = base + (k / bands - 0.5) * spread, a1 = base + ((k + 1) / bands - 0.5) * spread;
-    bc.fillStyle = `hsla(${k * 45}, 100%, 62%, 0.65)`;
-    bc.beginPath();
-    bc.moveTo(ox, oy);
-    bc.lineTo(ox + far * Math.cos(a0), oy + far * Math.sin(a0));
-    bc.lineTo(ox + far * Math.cos(a1), oy + far * Math.sin(a1));
-    bc.closePath();
-    bc.fill();
-  }
-  const soft = wpBlurred('prismBlur', buf, w, h, 0.006 + 0.03 * p.softness);
-  ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = 0.35 + 0.55 * amount;
-  ctx.drawImage(soft, 0, 0, w, h);
-  ctx.restore();
-  // the prism itself
-  const s = m * 0.09;
-  ctx.save();
-  ctx.translate(ox, oy);
-  ctx.rotate(base + Math.PI / 2);
-  ctx.beginPath();
-  ctx.moveTo(0, -s);
-  ctx.lineTo(s * 0.87, s * 0.5);
-  ctx.lineTo(-s * 0.87, s * 0.5);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-  ctx.lineWidth = Math.max(1, m * 0.003);
-  ctx.stroke();
-  ctx.restore();
-}
-/* Glass as a finishing effect (Gradient/Mesh studios and the wallpaper
-   Effects card): type + strength, with sensible fixed knobs. */
-function wpApplyGlass(ctx, w, h, type, amount, T, seed) {
-  if (!type || type === 'none' || !(amount > 0)) return;
-  const rnd = wpHashFn(seed || 'glass');
-  const p = { density: 0.45, size: 0.5, softness: 0.55, depth: 0.5, angle: 0.08, thickness: 0.5 };
-  if (type === 'frosted') wpGlassPanes(ctx, w, h, T || 0, p, rnd, amount);
-  else if (type === 'fluted') wpFlutedGlass(ctx, w, h, p, amount);
-  else if (type === 'liquid') wpLiquidDrops(ctx, w, h, T || 0, p, rnd, amount);
-  else if (type === 'prism') wpPrismBeams(ctx, w, h, T || 0, p, amount);
+    ctx.strokeStyle = `rgba(120,200,255,${0.12 * amount})`;
+    ctx.beginPath();
+    ctx.arc(cx + 1, cy + 1, r - ctx.lineWidth, Math.PI * 0.1, Math.PI * 0.9);
+    ctx.stroke();
+  });
 }
 
-/* Post-processing on a finished frame. Order: glass (reshapes the image),
-   glow (adds light), duotone (remaps tones), then the surface layers —
-   vignette and grain last so they sit on top as texture. */
-function wpApplyEffects(ctx, w, h, effects, t) {
+/* ---- add-on effects ---- */
+function wpRainOnGlass(ctx, w, h, t, amount, seed) {
+  const m = Math.min(w, h);
+  const rnd = wpHashFn(String(seed || 'rain') + ':rain');
+  const base = wpCopyOf('rain', ctx.canvas, w, h);
+  const fog = wpBlurred('rainFog', base, w, h, 0.015 + 0.03 * amount);
+  ctx.save();
+  ctx.globalAlpha = 0.45 + 0.5 * amount;
+  ctx.drawImage(fog, 0, 0, w, h);
+  ctx.restore();
+  const n = Math.round(30 + amount * 170);
+  for (let i = 0; i < n; i++) {
+    const q = rnd(i * 5 + 1);
+    const r = m * (0.004 + 0.03 * q * q * q) * (0.8 + 0.5 * amount);
+    const x = rnd(i * 5 + 2) * w;
+    const sliding = r > m * 0.01;
+    const y = ((rnd(i * 5 + 3) * (h + 4 * r)) + (sliding ? t * m * 0.04 * (0.5 + rnd(i * 5 + 4)) : 0)) % (h + 4 * r) - 2 * r;
+    if (sliding) {
+      // the clear trail a sliding drop wipes through the fog
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x - r * 0.45, y - r * 14, r * 0.9, r * 14);
+      ctx.clip();
+      ctx.globalAlpha = 0.7;
+      ctx.drawImage(base, 0, 0, w, h);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * 1.15, 0, 0, Math.PI * 2);
+    ctx.clip();
+    // water drops act as tiny lenses and flip what's behind them
+    ctx.translate(x, y);
+    ctx.scale(-1, -1);
+    wpDrawSub(ctx, base, x - r * 2.2, y - r * 2.2, r * 4.4, r * 4.4, -r, -r * 1.15, r * 2, r * 2.3);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0,0,0,0.32)';
+    ctx.lineWidth = Math.max(0.8, r * 0.2);
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * 1.15, 0, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath();
+    ctx.arc(x - r * 0.35, y - r * 0.45, Math.max(0.6, r * 0.22), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+function wpBokeh(ctx, w, h, t, objs, colors, intensity) {
+  if (!objs.length) return;
+  const m = Math.min(w, h);
+  const fg = colors && colors.length > 1 ? colors.slice(1) : (colors || ['#ffffff']);
+  const light = colors && wpIsLightHex(colors[0]);
+  ctx.save();
+  ctx.globalCompositeOperation = light ? 'soft-light' : 'screen';
+  objs.forEach((o, i) => {
+    const r = o.s * m;
+    const { x, y } = wpObjAt(o, t, w, h);
+    const c = wpShade(fg[(o.c ?? i) % fg.length], 0.28);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, wpHexToRgba(c, 0.3 * intensity));
+    g.addColorStop(0.72, wpHexToRgba(c, 0.42 * intensity));
+    g.addColorStop(0.9, wpHexToRgba(c, 0.7 * intensity));
+    g.addColorStop(1, wpHexToRgba(c, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+function wpSparkles(ctx, w, h, t, objs, intensity) {
+  if (!objs.length) return;
+  const m = Math.min(w, h);
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  objs.forEach((o) => {
+    const s = o.s * m;
+    const { x, y } = wpObjAt(o, t, w, h);
+    const tw = o.pin || wpFreezeObjects ? 1 : 0.35 + 0.65 * Math.abs(Math.sin(t * 1.6 * (o.sp || 1) + (o.ph || 0)));
+    const a = intensity * tw;
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, s * 0.7);
+    glow.addColorStop(0, `rgba(255,255,255,${0.75 * a})`);
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(x - s, y - s, s * 2, s * 2);
+    ctx.fillStyle = `rgba(255,255,255,${0.95 * a})`;
+    [[s, s * 0.07], [s * 0.07, s]].forEach(([rx, ry]) => {
+      ctx.beginPath();
+      ctx.moveTo(x - rx, y); ctx.quadraticCurveTo(x, y, x, y - ry);
+      ctx.quadraticCurveTo(x, y, x + rx, y); ctx.quadraticCurveTo(x, y, x, y + ry);
+      ctx.quadraticCurveTo(x, y, x - rx, y);
+      ctx.fill();
+    });
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = `rgba(255,255,255,${0.5 * a})`;
+    ctx.fillRect(-s * 0.45, -s * 0.02, s * 0.9, s * 0.04);
+    ctx.fillRect(-s * 0.02, -s * 0.45, s * 0.04, s * 0.9);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+function wpLightLeak(ctx, w, h, t, amount) {
+  const M = Math.max(w, h);
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = Math.min(1, amount);
+  [['#ff5a1f', 0, 0.12, 0.75], ['#ff2d6f', 1, 0.88, 0.6], ['#ffd166', 0.02, 0.92, 0.5], ['#ffb38a', 0.95, 0.1, 0.35]].forEach(([c, ex, ey, rad], i) => {
+    const x = ex * w + Math.sin(t * 0.13 + i * 2) * w * 0.06;
+    const y = ey * h + Math.cos(t * 0.11 + i) * h * 0.06;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, M * rad);
+    g.addColorStop(0, wpHexToRgba(c, 1));
+    g.addColorStop(0.35, wpHexToRgba(c, 0.55));
+    g.addColorStop(1, wpHexToRgba(c, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+  ctx.restore();
+}
+function wpLensFlare(ctx, w, h, t, amount) {
+  const m = Math.min(w, h);
+  const sx = w * (0.78 + 0.03 * Math.sin(t * 0.2)), sy = h * (0.18 + 0.02 * Math.cos(t * 0.17));
+  const cx = w / 2, cy = h / 2;
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = Math.min(1, amount);
+  const core = ctx.createRadialGradient(sx, sy, 0, sx, sy, m * 0.22);
+  core.addColorStop(0, 'rgba(255,255,255,0.95)');
+  core.addColorStop(0.12, 'rgba(255,240,210,0.6)');
+  core.addColorStop(1, 'rgba(255,200,150,0)');
+  ctx.fillStyle = core;
+  ctx.fillRect(0, 0, w, h);
+  // anamorphic streak
+  const streak = ctx.createLinearGradient(sx - w * 0.6, sy, sx + w * 0.6, sy);
+  streak.addColorStop(0, 'rgba(140,190,255,0)');
+  streak.addColorStop(0.5, 'rgba(200,225,255,0.55)');
+  streak.addColorStop(1, 'rgba(140,190,255,0)');
+  ctx.fillStyle = streak;
+  ctx.fillRect(0, sy - m * 0.004, w, m * 0.008);
+  // starburst rays
+  ctx.strokeStyle = 'rgba(255,245,230,0.35)';
+  ctx.lineWidth = Math.max(1, m * 0.002);
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2 + t * 0.05;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.cos(a) * m * 0.16, sy + Math.sin(a) * m * 0.16);
+    ctx.stroke();
+  }
+  // ghosts along the line through the center
+  [[0.35, 0.05, 'rgba(120,255,200,0.16)'], [0.7, 0.025, 'rgba(255,160,90,0.22)'], [1.25, 0.09, 'rgba(120,150,255,0.12)'], [1.6, 0.035, 'rgba(255,110,190,0.18)'], [1.9, 0.14, 'rgba(255,230,140,0.07)']].forEach(([f, rad, col]) => {
+    const gx = sx + (cx - sx) * f, gy = sy + (cy - sy) * f;
+    const g = ctx.createRadialGradient(gx, gy, m * rad * 0.6, gx, gy, m * rad);
+    g.addColorStop(0, col);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(gx, gy, m * rad, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  const halo = ctx.createRadialGradient(sx, sy, m * 0.3, sx, sy, m * 0.34);
+  halo.addColorStop(0, 'rgba(255,255,255,0)');
+  halo.addColorStop(0.5, 'rgba(200,220,255,0.12)');
+  halo.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+/* Texture tiles, generated once. */
+const WP_TEXTURE_TILES = {};
+function wpTextureTile(kind) {
+  if (WP_TEXTURE_TILES[kind]) return WP_TEXTURE_TILES[kind];
+  const size = kind === 'scanlines' ? 4 : kind === 'halftone' ? 12 : 256;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const x = c.getContext('2d');
+  if (kind === 'paper') {
+    const img = x.createImageData(size, size);
+    for (let i = 0; i < img.data.length; i += 4) {
+      const v = 190 + Math.random() * 65;
+      img.data[i] = v; img.data[i + 1] = v - 2; img.data[i + 2] = v - 8; img.data[i + 3] = 255;
+    }
+    x.putImageData(img, 0, 0);
+    x.globalAlpha = 0.25;
+    x.strokeStyle = '#8a7f70';
+    for (let f = 0; f < 60; f++) {
+      x.lineWidth = 0.4 + Math.random() * 0.6;
+      x.beginPath();
+      const px = Math.random() * size, py = Math.random() * size, a = Math.random() * 6.28, L = 6 + Math.random() * 22;
+      x.moveTo(px, py);
+      x.quadraticCurveTo(px + Math.cos(a) * L * 0.5 + 3, py + Math.sin(a) * L * 0.5, px + Math.cos(a) * L, py + Math.sin(a) * L);
+      x.stroke();
+    }
+  } else if (kind === 'halftone') {
+    x.fillStyle = '#ffffff';
+    x.fillRect(0, 0, size, size);
+    x.fillStyle = '#000000';
+    x.beginPath(); x.arc(size / 2, size / 2, size * 0.28, 0, 6.283); x.fill();
+  } else if (kind === 'scanlines') {
+    x.fillStyle = '#ffffff';
+    x.fillRect(0, 0, size, size);
+    x.fillStyle = '#000000';
+    x.fillRect(0, 0, size, 1);
+  }
+  return (WP_TEXTURE_TILES[kind] = c);
+}
+function wpTexture(ctx, w, h, t, kind, amount) {
+  if (!kind || kind === 'none' || !(amount > 0)) return;
+  const m = Math.min(w, h);
+  ctx.save();
+  if (kind === 'holo') {
+    const a = t * 0.15;
+    const L = Math.hypot(w, h) / 2;
+    const g = ctx.createLinearGradient(w / 2 - Math.cos(a) * L, h / 2 - Math.sin(a) * L, w / 2 + Math.cos(a) * L, h / 2 + Math.sin(a) * L);
+    for (let s = 0; s <= 8; s++) g.addColorStop(s / 8, `hsl(${(s * 45 + t * 30) % 360}, 95%, 65%)`);
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = 0.85 * amount;
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  } else {
+    const tile = wpTextureTile(kind);
+    const pattern = ctx.createPattern(tile, 'repeat');
+    const scale = kind === 'paper' ? Math.max(1, m / 900) : kind === 'halftone' ? Math.max(0.5, m / 700) : Math.max(1, m / 500);
+    if (pattern.setTransform && typeof DOMMatrix !== 'undefined') pattern.setTransform(new DOMMatrix().scale(scale));
+    ctx.globalCompositeOperation = kind === 'halftone' ? 'soft-light' : 'multiply';
+    ctx.globalAlpha = Math.min(1, (kind === 'scanlines' ? 0.6 : kind === 'halftone' ? 1 : 1.2) * amount);
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.restore();
+}
+
+/* Effect settings, shared by the Gradient, Mesh and Wallpaper studios.
+   0–1 amounts; object counts for glass/bokeh/sparkles come from them. */
+const WP_FX_DEFAULT = {
+  glass: 'none', glassAmount: 0.75, glassCount: 0.4, glassSize: 0.5,
+  grain: 0, vignette: 0, glow: 0,
+  bokeh: 0, bokehSize: 0.5, sparkles: 0, sparkleSize: 0.5,
+  leak: 0, flare: 0, rain: 0,
+  texture: 'none', textureAmount: 0.5,
+  duotone: null,
+};
+function wpFxCounts(fx) {
+  return {
+    fxpane: 1 + Math.round((fx.glassCount ?? 0.4) * 7),
+    fxdrop: 2 + Math.round((fx.glassCount ?? 0.4) * 22),
+    bokeh: Math.round((fx.bokeh || 0) * 40),
+    sparkle: Math.round((fx.sparkles || 0) * 30),
+  };
+}
+/* Post-processing on a finished frame, in the order light behaves:
+   glass and rain reshape the image, glow and duotone change its tones,
+   light (leak, bokeh, sparkles, flare) is added on top, then surface
+   texture, vignette and grain last. env: { colors, objects, seed }. */
+function wpApplyEffects(ctx, w, h, effects, t, env) {
   if (!effects) return;
-  wpApplyGlass(ctx, w, h, effects.glass, effects.glassAmount ?? 0.7, t, 'fx');
-  wpGlow(ctx, w, h, effects.glow || 0);
-  const duotone = effects.duotone;
+  const fx = Object.assign({}, WP_FX_DEFAULT, effects);
+  const counts = wpFxCounts(fx);
+  const e = env || {};
+  if (fx.glass === 'frosted') wpDrawPanes(ctx, w, h, t || 0, wpObjects(e, 'fxpane', counts.fxpane, fx.glassSize), 0.55, fx.glassAmount);
+  else if (fx.glass === 'fluted') wpFlutedGlass(ctx, w, h, fx.glassSize, 0.5, fx.glassAmount);
+  else if (fx.glass === 'liquid') wpDrawDrops(ctx, w, h, t || 0, wpObjects(e, 'fxdrop', counts.fxdrop, fx.glassSize), 0.5, fx.glassAmount);
+  if (fx.rain > 0) wpRainOnGlass(ctx, w, h, t || 0, fx.rain, e.seed);
+  wpGlow(ctx, w, h, fx.glow || 0);
+  const duotone = fx.duotone;
   if (duotone && duotone.shadow && duotone.highlight) {
     ctx.save();
     ctx.globalCompositeOperation = 'saturation';
@@ -3249,8 +3519,13 @@ function wpApplyEffects(ctx, w, h, effects, t) {
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
   }
-  wpVignette(ctx, w, h, effects.vignette || 0);
-  wpGrain(ctx, w, h, effects.grain || 0, t);
+  if (fx.leak > 0) wpLightLeak(ctx, w, h, t || 0, fx.leak);
+  if (fx.bokeh > 0) wpBokeh(ctx, w, h, t || 0, wpObjects(e, 'bokeh', counts.bokeh, fx.bokehSize), e.colors, 1);
+  if (fx.sparkles > 0) wpSparkles(ctx, w, h, t || 0, wpObjects(e, 'sparkle', counts.sparkle, fx.sparkleSize), 1);
+  if (fx.flare > 0) wpLensFlare(ctx, w, h, t || 0, fx.flare);
+  wpTexture(ctx, w, h, t || 0, fx.texture, fx.textureAmount);
+  wpVignette(ctx, w, h, fx.vignette || 0);
+  wpGrain(ctx, w, h, fx.grain || 0, t);
 }
 
 function wpHexToHsl(hex) { return hexToHsl(hex); }
@@ -3334,8 +3609,15 @@ function wpApplyAmoledCrush(ctx, w, h, threshold) {
    exactly what the PNG export will contain.
    ========================================================================== */
 var studioFxFrame = {};
-function studioFxActive(fx) {
-  return !!fx && ((fx.glass && fx.glass !== 'none') || fx.grain > 0 || fx.vignette > 0 || fx.glow > 0);
+function studioFxActive(fx) { return wpFxActive(fx); }
+function wpFxActive(fx) {
+  if (!fx) return false;
+  return (fx.glass && fx.glass !== 'none') || fx.grain > 0 || fx.vignette > 0 || fx.glow > 0 || fx.bokeh > 0 || fx.sparkles > 0
+    || fx.leak > 0 || fx.flare > 0 || fx.rain > 0 || (fx.texture && fx.texture !== 'none') || !!fx.duotone;
+}
+function studioFxEnv(studio) {
+  const cols = studio === 'gradient' ? gradientState.stops.map(s => s.color) : [meshState.baseColor, ...meshState.points.map(p => p.color)];
+  return { colors: studio === 'gradient' ? [cols[0], ...cols] : cols, objects: null, seed: studio };
 }
 function paintStudioFx(studio, canvas, host) {
   const state = studio === 'gradient' ? gradientState : meshState;
@@ -3347,7 +3629,7 @@ function paintStudioFx(studio, canvas, host) {
   const ctx = canvas.getContext('2d');
   if (studio === 'gradient') drawGradientToCanvas(ctx, w, h, state);
   else drawMeshToCanvas(ctx, w, h, state);
-  wpApplyEffects(ctx, w, h, state.fx, 0);
+  wpApplyEffects(ctx, w, h, state.fx, 0, studioFxEnv(studio));
 }
 function scheduleStudioFx(studio) {
   if (studioFxFrame[studio]) return;
@@ -3361,67 +3643,130 @@ function scheduleStudioFx(studio) {
     paintStudioFx(studio, c, host);
   });
 }
-function mountFxCard(studio) {
+
+/* ---- the Effects panel (all three studios) ----
+   A row of chips; tapping one turns that effect on with a sensible
+   starting value and shows its few controls underneath. Only effects
+   that are on take up space — the rest are one chip each. */
+const FX_CHIPS = [
+  { key: 'glass', label: 'Glass', isOn: fx => fx.glass !== 'none', on: fx => { fx.glass = 'frosted'; }, off: fx => { fx.glass = 'none'; },
+    controls: [
+      { type: 'select', prop: 'glass', label: 'Kind', options: [['frosted', 'Frosted panes'], ['liquid', 'Bubbles'], ['fluted', 'Fluted glass']] },
+      { prop: 'glassCount', label: 'Quantity', when: fx => fx.glass !== 'fluted' },
+      { prop: 'glassSize', label: 'Size' },
+      { prop: 'glassAmount', label: 'Strength', min: 10 },
+    ] },
+  { key: 'bokeh', label: 'Bokeh', isOn: fx => fx.bokeh > 0, on: fx => { fx.bokeh = 0.4; }, off: fx => { fx.bokeh = 0; },
+    controls: [{ prop: 'bokeh', label: 'Quantity', min: 1 }, { prop: 'bokehSize', label: 'Size' }] },
+  { key: 'sparkles', label: 'Sparkles', isOn: fx => fx.sparkles > 0, on: fx => { fx.sparkles = 0.35; }, off: fx => { fx.sparkles = 0; },
+    controls: [{ prop: 'sparkles', label: 'Quantity', min: 1 }, { prop: 'sparkleSize', label: 'Size' }] },
+  { key: 'leak', label: 'Light leak', isOn: fx => fx.leak > 0, on: fx => { fx.leak = 0.45; }, off: fx => { fx.leak = 0; },
+    controls: [{ prop: 'leak', label: 'Strength', min: 1 }] },
+  { key: 'flare', label: 'Lens flare', isOn: fx => fx.flare > 0, on: fx => { fx.flare = 0.6; }, off: fx => { fx.flare = 0; },
+    controls: [{ prop: 'flare', label: 'Strength', min: 1 }] },
+  { key: 'rain', label: 'Rain on glass', isOn: fx => fx.rain > 0, on: fx => { fx.rain = 0.5; }, off: fx => { fx.rain = 0; },
+    controls: [{ prop: 'rain', label: 'Amount', min: 1 }] },
+  { key: 'texture', label: 'Texture', isOn: fx => fx.texture && fx.texture !== 'none', on: fx => { fx.texture = 'paper'; }, off: fx => { fx.texture = 'none'; },
+    controls: [
+      { type: 'select', prop: 'texture', label: 'Kind', options: [['paper', 'Paper'], ['halftone', 'Halftone'], ['scanlines', 'Scanlines'], ['holo', 'Holographic']] },
+      { prop: 'textureAmount', label: 'Strength', min: 1 },
+    ] },
+  { key: 'glow', label: 'Glow', isOn: fx => fx.glow > 0, on: fx => { fx.glow = 0.35; }, off: fx => { fx.glow = 0; }, controls: [{ prop: 'glow', label: 'Amount', min: 1 }] },
+  { key: 'grain', label: 'Grain', isOn: fx => fx.grain > 0, on: fx => { fx.grain = 0.2; }, off: fx => { fx.grain = 0; }, controls: [{ prop: 'grain', label: 'Amount', min: 1 }] },
+  { key: 'vignette', label: 'Vignette', isOn: fx => fx.vignette > 0, on: fx => { fx.vignette = 0.35; }, off: fx => { fx.vignette = 0; }, controls: [{ prop: 'vignette', label: 'Amount', min: 1 }] },
+  { key: 'duotone', label: 'Duotone', only: 'wallpaper', isOn: fx => !!fx.duotone, on: fx => { fx.duotone = { shadow: '#160f2e', highlight: '#ff9ecf' }; }, off: fx => { fx.duotone = null; },
+    controls: [{ type: 'duotone' }] },
+];
+const FX_PANELS = {};
+function fxStateOf(studio) {
+  if (studio === 'wallpaper') return (wallpaperState.effects = Object.assign({}, WP_FX_DEFAULT, wallpaperState.effects || {}));
+  const st = studio === 'gradient' ? gradientState : meshState;
+  return (st.fx = Object.assign({}, WP_FX_DEFAULT, st.fx || {}));
+}
+function fxRerender(studio) {
+  if (studio === 'gradient') renderGradientPreview();
+  else if (studio === 'mesh') renderMeshPreview();
+  else refreshWallpaper();
+}
+function mountFxPanel(studio, hint) {
   const card = document.querySelector(`.fx-card[data-fx="${studio}"]`);
   if (!card) return;
-  const P = studio + 'Fx';
-  card.innerHTML = `
-    <label class="control-label">Effects</label>
-    <div class="wp-field">
-      <span class="wp-save-label">Glass</span>
-      <select id="${P}Glass" class="select">
-        <option value="none">None</option><option value="frosted">Frosted panes</option><option value="fluted">Fluted glass</option>
-        <option value="liquid">Liquid drops</option><option value="prism">Prism light</option>
-      </select>
-    </div>
-    <div class="wp-param" id="${P}GlassAmountRow" hidden>
-      <label class="control-label-row wp-param-label" for="${P}GlassAmount"><span>Glass strength</span><span class="control-value" id="${P}GlassAmountValue">70%</span></label>
-      <input type="range" id="${P}GlassAmount" class="slider" min="10" max="100" value="70">
-    </div>
-    ${['grain', 'vignette', 'glow'].map(k => `
-    <div class="wp-param">
-      <label class="control-label-row wp-param-label" for="${P}${k}"><span>${k[0].toUpperCase() + k.slice(1)}</span><span class="control-value" id="${P}${k}Value">0%</span></label>
-      <input type="range" id="${P}${k}" class="slider" min="0" max="100" value="0">
-    </div>`).join('')}
-    <p class="hint">Shown in the preview and PNG. A little grain also stops color banding.</p>`;
-  const getState = () => (studio === 'gradient' ? gradientState : meshState);
-  const rerender = () => (studio === 'gradient' ? renderGradientPreview() : renderMeshPreview());
-  const ensure = () => { const st = getState(); st.fx = Object.assign({ glass: 'none', glassAmount: 0.7, grain: 0, vignette: 0, glow: 0 }, st.fx || {}); return st.fx; };
-  document.getElementById(`${P}Glass`).addEventListener('change', (e) => {
-    ensure().glass = e.target.value;
-    document.getElementById(`${P}GlassAmountRow`).hidden = e.target.value === 'none';
-    rerender();
-  });
-  document.getElementById(`${P}GlassAmount`).addEventListener('input', (e) => {
-    ensure().glassAmount = Number(e.target.value) / 100;
-    document.getElementById(`${P}GlassAmountValue`).textContent = `${e.target.value}%`;
-    rerender();
-  });
-  ['grain', 'vignette', 'glow'].forEach(k => {
-    document.getElementById(`${P}${k}`).addEventListener('input', (e) => {
-      ensure()[k] = Number(e.target.value) / 100;
-      document.getElementById(`${P}${k}Value`).textContent = `${e.target.value}%`;
-      rerender();
+  FX_PANELS[studio] = { card, hint };
+  syncFxPanel(studio);
+}
+function syncFxPanel(studio) {
+  const panel = FX_PANELS[studio];
+  if (!panel) return;
+  const fx = fxStateOf(studio);
+  const chips = FX_CHIPS.filter(c => !c.only || c.only === studio);
+  const P = `fx-${studio}-`;
+  panel.card.innerHTML = `
+    <div class="control-label-row"><label class="control-label">Effects</label>${studio === 'wallpaper' ? '<button id="btnRemixWallpaper" class="btn btn-sm">🔀 Surprise</button>' : ''}</div>
+    <div class="fx-chips" role="group" aria-label="Effects">${chips.map(c => `<button type="button" class="fx-chip${c.isOn(fx) ? ' on' : ''}" data-fx-chip="${c.key}" aria-pressed="${c.isOn(fx)}">${c.isOn(fx) ? '✓ ' : '+ '}${c.label}</button>`).join('')}</div>
+    <div class="fx-groups">${chips.filter(c => c.isOn(fx)).map(c => `
+      <div class="fx-group" data-fx-group="${c.key}">
+        <div class="fx-group-head"><span>${c.label}</span><button type="button" class="fx-remove" data-fx-off="${c.key}" aria-label="Turn off ${c.label}" title="Turn off">✕</button></div>
+        ${c.controls.filter(ctl => !ctl.when || ctl.when(fx)).map(ctl => {
+          if (ctl.type === 'select') return `<div class="wp-field"><span class="wp-save-label">${ctl.label}</span><select class="select" id="${P}${ctl.prop}" data-fx-prop="${ctl.prop}">${ctl.options.map(([v, l]) => `<option value="${v}"${fx[ctl.prop] === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>`;
+          if (ctl.type === 'duotone') return `<div class="duotone-colors"><input type="color" data-duo="shadow" value="${fx.duotone.shadow}" aria-label="Shadow color" title="Shadows"><input type="color" data-duo="highlight" value="${fx.duotone.highlight}" aria-label="Highlight color" title="Highlights"></div>`;
+          const v = Math.round((fx[ctl.prop] ?? 0) * 100);
+          return `<div class="wp-param"><label class="control-label-row wp-param-label" for="${P}${ctl.prop}"><span>${ctl.label}</span><span class="control-value">${v}</span></label><input type="range" class="slider" id="${P}${ctl.prop}" data-fx-prop="${ctl.prop}" min="${ctl.min ?? 0}" max="100" value="${v}"></div>`;
+        }).join('')}
+      </div>`).join('')}</div>
+    ${panel.hint ? `<p class="hint fx-hint">${panel.hint}</p>` : ''}`;
+  panel.card.querySelectorAll('[data-fx-chip]').forEach(b => b.addEventListener('click', () => {
+    const c = FX_CHIPS.find(x => x.key === b.dataset.fxChip);
+    if (c.isOn(fx)) c.off(fx); else c.on(fx);
+    syncFxPanel(studio);
+    fxRerender(studio);
+    haptic(8);
+  }));
+  panel.card.querySelectorAll('[data-fx-off]').forEach(b => b.addEventListener('click', () => {
+    FX_CHIPS.find(x => x.key === b.dataset.fxOff).off(fx);
+    syncFxPanel(studio);
+    fxRerender(studio);
+  }));
+  panel.card.querySelectorAll('[data-fx-prop]').forEach(el => {
+    const isSelect = el.tagName === 'SELECT';
+    el.addEventListener(isSelect ? 'change' : 'input', () => {
+      if (isSelect) { fx[el.dataset.fxProp] = el.value; syncFxPanel(studio); }
+      else {
+        fx[el.dataset.fxProp] = Number(el.value) / 100;
+        el.closest('.wp-param').querySelector('.control-value').textContent = el.value;
+        if (studio === 'wallpaper') wpSyncObjectCounts();
+      }
+      fxRerender(studio);
     });
   });
+  panel.card.querySelectorAll('[data-duo]').forEach(el => el.addEventListener('input', () => {
+    fx.duotone = Object.assign({}, fx.duotone, { [el.dataset.duo]: el.value });
+    fxRerender(studio);
+  }));
+  const remix = panel.card.querySelector('#btnRemixWallpaper');
+  if (remix) remix.addEventListener('click', surpriseWallpaperEffects);
 }
-function syncFxCard(studio) {
-  const P = studio + 'Fx';
-  const el = document.getElementById(`${P}Glass`);
-  if (!el) return;
-  const fx = Object.assign({ glass: 'none', glassAmount: 0.7, grain: 0, vignette: 0, glow: 0 }, (studio === 'gradient' ? gradientState : meshState).fx || {});
-  el.value = fx.glass;
-  document.getElementById(`${P}GlassAmountRow`).hidden = fx.glass === 'none';
-  document.getElementById(`${P}GlassAmount`).value = Math.round(fx.glassAmount * 100);
-  document.getElementById(`${P}GlassAmountValue`).textContent = `${Math.round(fx.glassAmount * 100)}%`;
-  ['grain', 'vignette', 'glow'].forEach(k => {
-    const v = Math.round((fx[k] || 0) * 100);
-    document.getElementById(`${P}${k}`).value = v;
-    document.getElementById(`${P}${k}Value`).textContent = `${v}%`;
-  });
+function surpriseWallpaperEffects() {
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const fx = Object.assign({}, WP_FX_DEFAULT, { duotone: null });
+  const pool = ['glass', 'bokeh', 'sparkles', 'leak', 'flare', 'rain', 'texture', 'glow', 'vignette'];
+  const n = 1 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) {
+    const k = pick(pool);
+    FX_CHIPS.find(c => c.key === k).on(fx);
+  }
+  if (fx.glass !== 'none') fx.glass = pick(['frosted', 'liquid', 'fluted']);
+  if (fx.texture !== 'none') fx.texture = pick(['paper', 'halftone', 'scanlines', 'holo']);
+  fx.grain = Math.random() < 0.6 ? 0.1 + Math.random() * 0.25 : 0;
+  wallpaperState.effects = fx;
+  if (wallpaperState.objects) ['fxpane', 'fxdrop', 'bokeh', 'sparkle'].forEach(k => delete wallpaperState.objects[k]);
+  syncFxPanel('wallpaper');
+  refreshWallpaper();
+  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
+  showToast('Effects remixed');
 }
-mountFxCard('gradient');
-mountFxCard('mesh');
+function syncFxCard(studio) { syncFxPanel(studio); }
+mountFxPanel('gradient', 'Shown in the preview and PNG. A little grain also stops color banding.');
+mountFxPanel('mesh', 'Shown in the preview and PNG.');
 if (window.ResizeObserver) {
   const ro = new ResizeObserver((entries) => entries.forEach(en => scheduleStudioFx(en.target.id === 'gradientPreview' ? 'gradient' : 'mesh')));
   ro.observe(document.getElementById('gradientPreview'));
@@ -3491,40 +3836,16 @@ function wpColorField(ctx, w, h, T, C, rnd) {
 /* ---- Glass ---- */
 function wpStyleFrostedGlass(ctx, w, h, T, C, p, rnd) {
   wpColorField(ctx, w, h, T, C, rnd);
-  wpGlassPanes(ctx, w, h, T, p, rnd, 1);
+  wpDrawPanes(ctx, w, h, T, wpObjects(p.env, 'pane', 1 + Math.round(p.density * 7), p.size), p.softness, 1);
 }
 function wpStyleLiquidGlass(ctx, w, h, T, C, p, rnd) {
   wpColorField(ctx, w, h, T, C, rnd);
-  wpLiquidDrops(ctx, w, h, T, p, rnd, 1);
+  wpDrawDrops(ctx, w, h, T, wpObjects(p.env, 'drop', 2 + Math.round(p.density * 22), p.size), p.depth, 1);
 }
 function wpStyleFlutedGlass(ctx, w, h, T, C, p, rnd) {
   wpColorField(ctx, w, h, T * 1.6, C, rnd);
-  wpFlutedGlass(ctx, w, h, p, 1);
+  wpFlutedGlass(ctx, w, h, p.size, p.depth, 1);
 }
-function wpStylePrismLight(ctx, w, h, T, C, p, rnd) {
-  const bg = C[0];
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, wpShade(bg, -0.04));
-  g.addColorStop(1, wpShade(bg, 0.06));
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  ctx.globalAlpha = 0.55;
-  ctx.globalCompositeOperation = wpGlowOp(bg);
-  wpFg(C).forEach((c, i) => {
-    const cx = w * (0.2 + 0.6 * rnd(i + 3)) + Math.sin(T * 0.2 + i) * w * 0.1;
-    const cy = h * (0.2 + 0.6 * rnd(i + 9));
-    const r = Math.max(w, h) * 0.45;
-    const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-    rg.addColorStop(0, c);
-    rg.addColorStop(1, wpHexToRgba(c, 0));
-    ctx.fillStyle = rg;
-    ctx.fillRect(0, 0, w, h);
-  });
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-  wpPrismBeams(ctx, w, h, T, p, 1);
-}
-
 /* ---- Abstract ---- */
 function wpStyleSilk(ctx, w, h, T, C, p, rnd) {
   const m = Math.min(w, h);
@@ -3576,16 +3897,13 @@ function wpStyleInk(ctx, w, h, T, C, p, rnd) {
   ctx.fillRect(0, 0, w, h);
   ctx.globalCompositeOperation = wpGlowOp(C[0]);
   const fg = wpFg(C);
-  const n = 10 + Math.round(p.density * 28);
-  for (let i = 0; i < n; i++) {
-    const c = fg[i % fg.length];
-    const a = rnd(i * 6 + 1) * 6.283, sp = 0.5 + rnd(i * 6 + 2);
-    const cx = w * (0.5 + 0.36 * Math.sin(T * 0.07 * sp + a) + 0.12 * Math.sin(T * 0.19 + i));
-    const cy = h * (0.5 + 0.36 * Math.cos(T * 0.06 * sp + a * 1.3) + 0.12 * Math.cos(T * 0.23 + i * 0.7));
-    const r = m * (0.05 + 0.2 * p.size) * (0.5 + rnd(i * 6 + 3));
+  wpObjects(p.env, 'cloud', 10 + Math.round(p.density * 28), p.size).forEach((o, i) => {
+    const c = fg[(o.c ?? i) % fg.length];
+    const { x: cx, y: cy } = wpObjAt(o, T, w, h);
+    const r = o.s * m;
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.rotate(a + T * 0.05 * (rnd(i * 6 + 4) - 0.5) * 4);
+    ctx.rotate((o.r || 0) + (o.pin || wpFreezeObjects ? 0 : T * 0.05 * ((o.sp || 1) - 1) * 4));
     ctx.scale(1.9, 0.65 + 0.3 * p.softness);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
     g.addColorStop(0, wpHexToRgba(c, 0.42));
@@ -3596,7 +3914,7 @@ function wpStyleInk(ctx, w, h, T, C, p, rnd) {
     ctx.arc(0, 0, r, 0, 6.283);
     ctx.fill();
     ctx.restore();
-  }
+  });
   ctx.globalCompositeOperation = 'source-over';
   ctx.lineWidth = Math.max(1, m * 0.002);
   for (let j = 0; j < 8; j++) {
@@ -3685,33 +4003,36 @@ function wpStyleOrbs(ctx, w, h, T, C, p, rnd) {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   const fg = wpFg(C);
-  const n = 4 + Math.round(p.density * 10);
-  const orbs = [];
-  for (let i = 0; i < n; i++) {
-    const r = m * (0.04 + 0.14 * p.size) * (0.45 + rnd(i * 4 + 1));
-    const cx = w * (0.5 + 0.42 * Math.sin(T * 0.12 * (0.5 + rnd(i * 4 + 2)) + rnd(i * 4 + 3) * 6.28));
-    const cy = h * (0.5 + 0.42 * Math.cos(T * 0.1 * (0.5 + rnd(i * 4)) + i * 1.9));
-    orbs.push({ r, cx, cy, c: fg[i % fg.length] });
-  }
-  orbs.sort((a, b) => a.r - b.r).forEach(o => {
-    const sh = ctx.createRadialGradient(o.cx, o.cy + o.r * (0.9 + p.depth * 0.6), 0, o.cx, o.cy + o.r * (0.9 + p.depth * 0.6), o.r * 1.1);
-    sh.addColorStop(0, `rgba(0,0,0,${0.18 + 0.2 * p.depth})`);
-    sh.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = sh;
-    ctx.fillRect(o.cx - o.r * 1.2, o.cy, o.r * 2.4, o.r * 2.4);
-    const body = ctx.createRadialGradient(o.cx - o.r * 0.35, o.cy - o.r * 0.4, o.r * 0.05, o.cx, o.cy, o.r);
-    body.addColorStop(0, wpShade(o.c, 0.3));
-    body.addColorStop(0.5, o.c);
-    body.addColorStop(1, wpShade(o.c, -0.35));
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    ctx.arc(o.cx, o.cy, o.r, 0, 6.283);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.beginPath();
-    ctx.ellipse(o.cx - o.r * 0.38, o.cy - o.r * 0.45, o.r * 0.22, o.r * 0.12, -0.6, 0, 6.283);
-    ctx.fill();
-  });
+  const objs = wpObjects(p.env, 'orb', 3 + Math.round(p.density * 12), p.size);
+  objs.map((o, i) => ({ o, r: o.s * m, pos: wpObjAt(o, T, w, h), c: fg[(o.c ?? i) % fg.length] }))
+    .sort((a, b) => a.r - b.r)
+    .forEach(({ r, pos, c }) => {
+      const cx = pos.x, cy = pos.y;
+      const off = r * (0.9 + p.depth * 0.6);
+      const sh = ctx.createRadialGradient(cx, cy + off, 0, cx, cy + off, r * 1.1);
+      sh.addColorStop(0, `rgba(0,0,0,${0.18 + 0.2 * p.depth})`);
+      sh.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = sh;
+      ctx.fillRect(cx - r * 1.2, cy, r * 2.4, r * 2.4);
+      const body = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.05, cx, cy, r);
+      body.addColorStop(0, wpShade(c, 0.3));
+      body.addColorStop(0.5, c);
+      body.addColorStop(1, wpShade(c, -0.35));
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, 6.283);
+      ctx.fill();
+      // rim light from behind, then the specular highlight
+      ctx.strokeStyle = wpHexToRgba(wpShade(c, 0.35), 0.35);
+      ctx.lineWidth = Math.max(1, r * 0.03);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.985, Math.PI * 0.15, Math.PI * 0.85);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(cx - r * 0.38, cy - r * 0.45, r * 0.22, r * 0.12, -0.6, 0, 6.283);
+      ctx.fill();
+    });
 }
 function wpStyleHolo(ctx, w, h, T, C, p) {
   const ang = p.angle * Math.PI;
@@ -3803,14 +4124,14 @@ function wpStyleTopo(ctx, w, h, T, C, p, rnd) {
   }
 }
 function wpStyleGrainyPoster(ctx, w, h, T, C, p, rnd) {
-  const m = Math.max(w, h);
+  const M = Math.max(w, h);
   ctx.fillStyle = C[0];
   ctx.fillRect(0, 0, w, h);
   const fg = wpFg(C);
-  fg.forEach((c, i) => {
-    const cx = w * (0.2 + 0.6 * rnd(i * 3 + 1)) + Math.sin(T * 0.18 + i * 2) * w * 0.12;
-    const cy = h * (0.2 + 0.6 * rnd(i * 3 + 2)) + Math.cos(T * 0.15 + i) * h * 0.1;
-    const r = m * (0.25 + 0.3 * p.size) * (0.7 + 0.5 * rnd(i * 3 + 3));
+  wpBlobObjects(p.env, fg.length, p.size).forEach((o, i) => {
+    const c = fg[(o.c ?? i) % fg.length];
+    const { x: cx, y: cy } = wpObjAt(o, T * 0.4, w, h);
+    const r = o.s * M * 1.2;
     const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
     g.addColorStop(0, c);
     g.addColorStop(0.45 * (1 - p.softness) + 0.1, wpHexToRgba(c, 0.85));
@@ -3820,7 +4141,32 @@ function wpStyleGrainyPoster(ctx, w, h, T, C, p, rnd) {
   });
   wpGrain(ctx, w, h, 0.3 + 0.5 * p.density, T);
 }
-
+/* Color blobs: one per foreground color. Stored (edited) blobs are kept,
+   and any color added later gets a default blob of its own. */
+function wpBlobObjects(env, n, size) {
+  const auto = wpGenObjects('blob', n, size, env && env.seed);
+  const stored = env && env.objects && env.objects.blob;
+  if (!Array.isArray(stored)) return auto;
+  return stored.length >= n ? stored : stored.concat(auto.slice(stored.length));
+}
+function wpStyleFlowingMesh(ctx, w, h, T, C, p) {
+  const M = Math.max(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = wpGlowOp(C[0]);
+  const fg = wpFg(C);
+  wpBlobObjects(p.env, fg.length, p.size).forEach((o, i) => {
+    const c = fg[(o.c ?? i) % fg.length];
+    const { x: cx, y: cy } = wpObjAt(o, T, w, h);
+    const r = o.s * M * (1 + (o.pin || wpFreezeObjects ? 0 : 0.2 * Math.sin(T + i)));
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, c);
+    g.addColorStop(1, wpHexToRgba(c, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+  ctx.globalCompositeOperation = 'source-over';
+}
 /* ---- Patterns ---- */
 function wpStyleTruchet(ctx, w, h, T, C, p, rnd) {
   const m = Math.min(w, h);
@@ -4101,15 +4447,14 @@ const WP_CATEGORIES = [
 ];
 const WP_PARAM_LABELS = { density: 'Amount', size: 'Size', softness: 'Softness', angle: 'Angle', thickness: 'Line weight', depth: 'Depth' };
 const WP_STYLES = [
-  { id: 'frostedGlass', name: 'Frosted Glass', cat: 'glass', params: ['density', 'size', 'softness'], draw: wpStyleFrostedGlass },
+  { id: 'frostedGlass', name: 'Frosted Glass', cat: 'glass', params: ['density', 'size', 'softness'], labels: { density: 'Quantity' }, objects: ['pane'], draw: wpStyleFrostedGlass },
   { id: 'flutedGlass', name: 'Fluted Glass', cat: 'glass', params: ['size', 'depth'], draw: wpStyleFlutedGlass },
-  { id: 'liquidGlass', name: 'Liquid Glass', cat: 'glass', pro: true, params: ['density', 'size', 'depth'], draw: wpStyleLiquidGlass },
-  { id: 'prismLight', name: 'Prism Light', cat: 'glass', pro: true, params: ['angle', 'size', 'softness'], draw: wpStylePrismLight },
-  { id: 'grainyPoster', name: 'Grainy Poster', cat: 'abstract', params: ['density', 'size', 'softness'], draw: wpStyleGrainyPoster },
+  { id: 'liquidGlass', name: 'Liquid Glass', cat: 'glass', pro: true, params: ['density', 'size', 'depth'], labels: { density: 'Quantity', depth: 'Magnify' }, objects: ['drop'], draw: wpStyleLiquidGlass },
+  { id: 'grainyPoster', name: 'Grainy Poster', cat: 'abstract', params: ['density', 'size', 'softness'], labels: { density: 'Grain' }, objects: ['blob'], draw: wpStyleGrainyPoster },
   { id: 'paperLayers', name: 'Paper Layers', cat: 'abstract', params: ['density', 'size', 'depth'], draw: wpStylePaperLayers },
   { id: 'silk', name: 'Silk Folds', cat: 'abstract', pro: true, params: ['density', 'size', 'angle', 'depth'], draw: wpStyleSilk },
-  { id: 'ink', name: 'Ink in Water', cat: 'abstract', pro: true, params: ['density', 'size', 'softness'], draw: wpStyleInk },
-  { id: 'orbs', name: 'Glossy Orbs', cat: 'abstract', pro: true, params: ['density', 'size', 'depth'], draw: wpStyleOrbs },
+  { id: 'ink', name: 'Ink in Water', cat: 'abstract', pro: true, params: ['density', 'size', 'softness'], labels: { density: 'Quantity' }, objects: ['cloud'], draw: wpStyleInk },
+  { id: 'orbs', name: 'Glossy Orbs', cat: 'abstract', pro: true, params: ['density', 'size', 'depth'], labels: { density: 'Quantity' }, objects: ['orb'], draw: wpStyleOrbs },
   { id: 'holo', name: 'Holographic', cat: 'abstract', pro: true, params: ['angle', 'density'], draw: wpStyleHolo },
   { id: 'topo', name: 'Topographic', cat: 'abstract', pro: true, params: ['density', 'size', 'thickness'], draw: wpStyleTopo },
   { id: 'bauhaus', name: 'Bauhaus', cat: 'patterns', params: ['density', 'size'], draw: wpStyleBauhaus },
@@ -4121,7 +4466,7 @@ const WP_STYLES = [
   { id: 'seigaiha', name: 'Seigaiha Waves', cat: 'patterns', pro: true, params: ['density', 'thickness'], draw: wpStyleSeigaiha },
   { id: 'terrazzo', name: 'Terrazzo', cat: 'patterns', pro: true, params: ['density', 'size'], draw: wpStyleTerrazzo },
   { id: 'synthwave', name: 'Synthwave', cat: 'patterns', pro: true, params: ['density', 'size', 'thickness'], draw: wpStyleSynthwave },
-  { id: 'flowingMesh', name: 'Flowing Mesh', cat: 'classic', legacy: wpDrawFlowingMesh },
+  { id: 'flowingMesh', name: 'Flowing Mesh', cat: 'classic', params: ['size'], objects: ['blob'], draw: wpStyleFlowingMesh },
   { id: 'auroraFlow', name: 'Aurora Flow', cat: 'classic', legacy: wpDrawAuroraFlow },
   { id: 'radialPulse', name: 'Radial Pulse', cat: 'classic', legacy: wpDrawRadialPulse },
   { id: 'conicSpin', name: 'Conic Spin', cat: 'classic', legacy: wpDrawConicSpin },
@@ -4138,7 +4483,7 @@ const WP_STYLES = [
 const WP_STYLE_MAP = Object.fromEntries(WP_STYLES.map(s => [s.id, s]));
 const WP_DEFAULT_PARAMS = { density: 50, size: 50, softness: 50, angle: 10, thickness: 45, depth: 50 };
 
-function wpRenderStyle(id, ctx, w, h, t, colors, speed, params, seed) {
+function wpRenderStyle(id, ctx, w, h, t, colors, speed, params, seed, env) {
   const st = WP_STYLE_MAP[id] || WP_STYLE_MAP.flowingMesh;
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
@@ -4148,6 +4493,7 @@ function wpRenderStyle(id, ctx, w, h, t, colors, speed, params, seed) {
     const src = Object.assign({}, WP_DEFAULT_PARAMS, params || {});
     const p = {};
     Object.keys(WP_DEFAULT_PARAMS).forEach(k => { p[k] = clamp(Number(src[k]) || 0, 0, 100) / 100; });
+    p.env = env || { seed };
     st.draw(ctx, w, h, t * speed, colors, p, wpHashFn(seed));
   }
   ctx.restore();
@@ -4155,7 +4501,8 @@ function wpRenderStyle(id, ctx, w, h, t, colors, speed, params, seed) {
 /* One full frame: style, optional layered second style, then effects. */
 function wpRenderScene(ctx, w, h, t, s, opts) {
   const colors = s.timeOfDayTint ? wpApplyTimeOfDayTint(s.colors) : s.colors;
-  wpRenderStyle(s.pattern, ctx, w, h, t, colors, s.speed, s.params, s.seed);
+  const env = { colors, objects: s.objects || null, seed: s.seed };
+  wpRenderStyle(s.pattern, ctx, w, h, t, colors, s.speed, s.params, s.seed, env);
   const ov = s.overlay;
   if (ov && ov.style && ov.style !== 'none' && WP_STYLE_MAP[ov.style]) {
     const buf = wpBuf('layer:' + ((opts && opts.bufKey) || 'main'), w, h);
@@ -4168,7 +4515,7 @@ function wpRenderScene(ctx, w, h, t, s, opts) {
     ctx.drawImage(buf, 0, 0, w, h);
     ctx.restore();
   }
-  if (!(opts && opts.noEffects)) wpApplyEffects(ctx, w, h, s.effects, t);
+  if (!(opts && opts.noEffects)) wpApplyEffects(ctx, w, h, s.effects, t, env);
 }
 
 /* ==========================================================================
@@ -4191,7 +4538,7 @@ const WALLPAPER_PRESETS = [
   { name: 'Sepia Drift', pattern: 'flowingMesh', speed: 0.8, colors: ['#1a1006', '#c9944a', '#8a5a2b', '#e8c98f'], effects: { grain: 0.35, vignette: 0.4, glow: 0.15, duotone: { shadow: '#160f08', highlight: '#f0d9a8' } } },
 ];
 
-const WP_EFFECTS_DEFAULT = { grain: 0, vignette: 0, glow: 0, duotone: null, glass: 'none', glassAmount: 0.7 };
+const WP_EFFECTS_DEFAULT = WP_FX_DEFAULT;
 let wallpaperState = {
   pattern: 'flowingMesh',
   speed: 1.0,
@@ -4225,6 +4572,9 @@ function normalizeWallpaperState(s) {
   out.locked = out.colors.map((_, i) => !!(s && Array.isArray(s.locked) && s.locked[i]));
   out.effects = Object.assign({}, WP_EFFECTS_DEFAULT, (s && s.effects) || {});
   out.params = Object.assign({}, WP_DEFAULT_PARAMS, (s && s.params) || {});
+  if (out.pattern === 'prismLight') out.pattern = 'frostedGlass';
+  if (out.effects.glass === 'prism') out.effects.glass = 'none';
+  out.objects = s && s.objects && typeof s.objects === 'object' ? JSON.parse(JSON.stringify(s.objects)) : null;
   out.overlay = Object.assign({ style: 'none', opacity: 0.5, blend: 'soft-light' }, (s && s.overlay) || {});
   if (out.overlay.style !== 'none' && !isWallpaperStyleAllowed(out.overlay.style)) out.overlay.style = 'none';
   out.speed = clamp(Number(out.speed) || 1, 0.2, 3);
@@ -4275,7 +4625,7 @@ function resizeWallpaperCanvas() {
 function drawWallpaperFrame(t) {
   const w = wallpaperCanvas.width, h = wallpaperCanvas.height;
   const ctx = wallpaperCtx;
-  if (wallpaperState.parallax) {
+  if (wallpaperState.parallax && !(typeof wpEdit !== 'undefined' && wpEdit.on)) {
     // Tilt (or pointer, on a computer) shifts the scene a little; the
     // scene is drawn slightly oversized so the edges never show.
     wpInteract.tiltX += (wpInteract.targetX - wpInteract.tiltX) * 0.12;
@@ -4348,7 +4698,8 @@ function stopWallpaperAnimation() {
 }
 /* Redraw after any change: live mode repaints next frame anyway. */
 function refreshWallpaper() {
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  if (wpEdit.on) { wpRenderObjHandles(); drawWallpaperFrame(wallpaperFrozenT); }
+  else if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
   scheduleWallpaperThumbs();
 }
 function activateWallpaperTab() {
@@ -4432,13 +4783,14 @@ function renderWallpaperParamSliders() {
     const id = 'wpParam-' + key;
     const row = document.createElement('div');
     row.className = 'wp-param';
-    row.innerHTML = `<label class="control-label-row wp-param-label" for="${id}"><span>${WP_PARAM_LABELS[key]}</span><span class="control-value">${Math.round(wallpaperState.params[key])}</span></label>
+    row.innerHTML = `<label class="control-label-row wp-param-label" for="${id}"><span>${(st.labels && st.labels[key]) || WP_PARAM_LABELS[key]}</span><span class="control-value">${Math.round(wallpaperState.params[key])}</span></label>
       <input type="range" id="${id}" class="slider" min="0" max="100" value="${wallpaperState.params[key]}">`;
     const input = row.querySelector('input');
     const val = row.querySelector('.control-value');
     input.addEventListener('input', () => {
       wallpaperState.params[key] = Number(input.value);
       val.textContent = input.value;
+      wpSyncObjectCounts();
       refreshWallpaper();
     });
     box.appendChild(row);
@@ -4529,7 +4881,7 @@ function newWallpaperSeed() {
 }
 function randomizeWallpaper(what) {
   if (what !== 'layout') randomizeWallpaperColorsOnly();
-  if (what !== 'colors') newWallpaperSeed();
+  if (what !== 'colors') { newWallpaperSeed(); wallpaperState.objects = null; }
   renderWallpaperColorsList();
   syncWallpaperSeedUI();
   refreshWallpaper();
@@ -4628,68 +4980,11 @@ function syncWallpaperOverlayUI() {
   wallpaperOverlayBlend.value = ov.blend;
 }
 
-/* ---- effects ---- */
-const wallpaperGrainSlider = document.getElementById('wallpaperGrainSlider');
-const wallpaperVignetteSlider = document.getElementById('wallpaperVignetteSlider');
-const wallpaperGlowSlider = document.getElementById('wallpaperGlowSlider');
-const wallpaperGlassSelect = document.getElementById('wallpaperGlassSelect');
-const wallpaperDuotoneToggle = document.getElementById('wallpaperDuotoneToggle');
-const wallpaperDuotoneColors = document.getElementById('wallpaperDuotoneColors');
-const wallpaperDuotoneShadow = document.getElementById('wallpaperDuotoneShadow');
-const wallpaperDuotoneHighlight = document.getElementById('wallpaperDuotoneHighlight');
-[['wallpaperGrainSlider', 'grain', 'wallpaperGrainValue'], ['wallpaperVignetteSlider', 'vignette', 'wallpaperVignetteValue'], ['wallpaperGlowSlider', 'glow', 'wallpaperGlowValue']].forEach(([id, key, valId]) => {
-  const el = document.getElementById(id);
-  el.addEventListener('input', () => {
-    wallpaperState.effects[key] = Number(el.value) / 100;
-    document.getElementById(valId).textContent = `${el.value}%`;
-    refreshWallpaper();
-  });
-});
-wallpaperGlassSelect.addEventListener('change', () => {
-  wallpaperState.effects.glass = wallpaperGlassSelect.value;
-  refreshWallpaper();
-});
-function updateWallpaperDuotone() {
-  wallpaperState.effects.duotone = wallpaperDuotoneToggle.checked
-    ? { shadow: wallpaperDuotoneShadow.value, highlight: wallpaperDuotoneHighlight.value }
-    : null;
-  wallpaperDuotoneColors.hidden = !wallpaperDuotoneToggle.checked;
-  refreshWallpaper();
-}
-wallpaperDuotoneToggle.addEventListener('change', updateWallpaperDuotone);
-wallpaperDuotoneShadow.addEventListener('input', updateWallpaperDuotone);
-wallpaperDuotoneHighlight.addEventListener('input', updateWallpaperDuotone);
+/* ---- effects: the shared Effects panel (see FX_CHIPS) ---- */
 function syncWallpaperEffectsUI() {
-  const e = wallpaperState.effects;
-  [['wallpaperGrainSlider', 'grain', 'wallpaperGrainValue'], ['wallpaperVignetteSlider', 'vignette', 'wallpaperVignetteValue'], ['wallpaperGlowSlider', 'glow', 'wallpaperGlowValue']].forEach(([id, key, valId]) => {
-    const v = Math.round((e[key] || 0) * 100);
-    document.getElementById(id).value = v;
-    document.getElementById(valId).textContent = `${v}%`;
-  });
-  wallpaperGlassSelect.value = e.glass || 'none';
-  wallpaperDuotoneToggle.checked = !!e.duotone;
-  wallpaperDuotoneColors.hidden = !e.duotone;
-  if (e.duotone) { wallpaperDuotoneShadow.value = e.duotone.shadow; wallpaperDuotoneHighlight.value = e.duotone.highlight; }
+  syncFxPanel('wallpaper');
   document.getElementById('wallpaperTimeOfDayToggle').checked = !!wallpaperState.timeOfDayTint;
 }
-document.getElementById('btnRemixWallpaper').addEventListener('click', () => {
-  const hue = Math.random() * 360;
-  const glassRoll = Math.random();
-  wallpaperState.effects = {
-    grain: Math.random() * 0.4,
-    vignette: Math.random() * 0.5,
-    glow: Math.random() * 0.5,
-    glass: glassRoll < 0.6 ? 'none' : ['frosted', 'fluted', 'liquid', 'prism'][Math.floor(Math.random() * 4)],
-    glassAmount: 0.7,
-    duotone: Math.random() < 0.25
-      ? { shadow: hslToHex(hue, 40 + Math.random() * 20, 8 + Math.random() * 8), highlight: hslToHex(hue + (Math.random() - 0.5) * 40, 30 + Math.random() * 30, 78 + Math.random() * 15) }
-      : null,
-  };
-  syncWallpaperEffectsUI();
-  refreshWallpaper();
-  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
-  showToast('Effects remixed');
-});
 /* Time-of-day tint: asks for location once to use real sunrise/sunset;
    works without it on a fixed hour curve. */
 document.getElementById('wallpaperTimeOfDayToggle').addEventListener('change', (e) => {
@@ -4926,6 +5221,7 @@ function syncWallpaperMotionUI() {
 
 /* ---- live / still ---- */
 function setWallpaperLive(live) {
+  if (wpEdit.on) { wpEdit.wasLive = live; wallpaperState.live = live; wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', (b.dataset.mode === 'live') === live)); return; }
   wallpaperState.live = live;
   wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', (b.dataset.mode === 'live') === live));
   btnWallpaperNewFrame.hidden = live;
@@ -5267,8 +5563,364 @@ document.getElementById('btnMultiMonitorExport').addEventListener('click', () =>
   showToast(`${monitors}-monitor wallpaper downloaded — set your display mode to "Span"`);
 });
 
+
+/* ---- movable objects: editor ----
+   Tap ✥ on the preview. Every movable thing in the current style and
+   effects gets an outline; drag to move, the corner knob (or a pinch) to
+   resize, the top knob (or a two-finger twist) to rotate panes and ink.
+   The toolbar adds, duplicates, deletes, pins (pinned objects don't
+   drift in the live wallpaper) and resets to the automatic layout. The
+   preview holds still while editing so outlines sit exactly on top. */
+function wpStyleObjectKinds() {
+  const st = WP_STYLE_MAP[wallpaperState.pattern];
+  return (st && st.objects) || [];
+}
+function wpFxObjectKinds() {
+  const fx = Object.assign({}, WP_FX_DEFAULT, wallpaperState.effects || {});
+  const out = [];
+  if (fx.glass === 'frosted') out.push('fxpane');
+  if (fx.glass === 'liquid') out.push('fxdrop');
+  if (fx.bokeh > 0) out.push('bokeh');
+  if (fx.sparkles > 0) out.push('sparkle');
+  return out;
+}
+function wpEditableKinds() { return [...wpStyleObjectKinds(), ...wpFxObjectKinds()]; }
+function wpAutoCount(kind) {
+  const d = (wallpaperState.params.density ?? 50) / 100;
+  const fxc = wpFxCounts(Object.assign({}, WP_FX_DEFAULT, wallpaperState.effects || {}));
+  switch (kind) {
+    case 'pane': return 1 + Math.round(d * 7);
+    case 'drop': return 2 + Math.round(d * 22);
+    case 'orb': return 3 + Math.round(d * 12);
+    case 'cloud': return 10 + Math.round(d * 28);
+    case 'blob': return Math.max(1, wallpaperState.colors.length - 1);
+    default: return fxc[kind] || 0;
+  }
+}
+function wpAutoSize(kind) {
+  const fx = Object.assign({}, WP_FX_DEFAULT, wallpaperState.effects || {});
+  if (kind === 'fxpane' || kind === 'fxdrop') return fx.glassSize;
+  if (kind === 'bokeh') return fx.bokehSize;
+  if (kind === 'sparkle') return fx.sparkleSize;
+  return (wallpaperState.params.size ?? 50) / 100;
+}
+function wpMaterialize(kind) {
+  if (!wallpaperState.objects) wallpaperState.objects = {};
+  if (!Array.isArray(wallpaperState.objects[kind])) {
+    wallpaperState.objects[kind] = wpGenObjects(kind, wpAutoCount(kind), wpAutoSize(kind), wallpaperState.seed);
+  }
+  return wallpaperState.objects[kind];
+}
+/* Quantity sliders keep your edited objects: extra ones are appended from
+   the automatic layout, and lowering the count removes from the end. */
+function wpSyncObjectCounts() {
+  const objs = wallpaperState.objects;
+  if (!objs) return;
+  Object.keys(objs).forEach(kind => {
+    const list = objs[kind];
+    if (!Array.isArray(list) || kind === 'blob') return;
+    const n = wpAutoCount(kind);
+    if (list.length > n) list.length = n;
+    else if (list.length < n) list.push(...wpGenObjects(kind, n, wpAutoSize(kind), wallpaperState.seed).slice(list.length));
+  });
+  if (wpEdit.on) wpRenderObjHandles();
+}
+
+const wpEdit = { on: false, wasLive: true, sel: null };
+const objLayer = document.getElementById('wallpaperObjLayer');
+const objToolbar = document.getElementById('wallpaperObjToolbar');
+const btnEditObjects = document.getElementById('btnEditObjects');
+/* The toolbar lives at body level (a transformed ancestor would break
+   position: fixed). Phones: docked above the bottom tab bar, clear of the
+   small preview. Larger screens: floats along the preview's bottom edge. */
+if (objToolbar.parentElement !== document.body) document.body.appendChild(objToolbar);
+const wpPhoneQuery = window.matchMedia('(max-width: 599px)');
+function wpPlaceObjToolbar() {
+  if (objToolbar.hidden) return;
+  if (wpPhoneQuery.matches) { objToolbar.style.left = objToolbar.style.top = objToolbar.style.width = ''; return; }
+  const r = wallpaperCanvas.getBoundingClientRect();
+  objToolbar.style.left = r.left + 8 + 'px';
+  objToolbar.style.width = Math.max(0, r.width - 16) + 'px';
+  objToolbar.style.top = Math.min(window.innerHeight - objToolbar.offsetHeight - 8, r.bottom - objToolbar.offsetHeight - 8) + 'px';
+}
+function wpPlaceObjLayer() {
+  const c = wallpaperCanvas;
+  objLayer.style.left = c.offsetLeft + 'px';
+  objLayer.style.top = c.offsetTop + 'px';
+  objLayer.style.width = c.offsetWidth + 'px';
+  objLayer.style.height = c.offsetHeight + 'px';
+  wpPlaceObjToolbar();
+}
+window.addEventListener('scroll', () => { if (wpEdit.on) wpPlaceObjToolbar(); }, { passive: true });
+function wpObjFind(ref) {
+  if (!ref || !wallpaperState.objects) return null;
+  const list = wallpaperState.objects[ref.kind];
+  return list && list[ref.i] ? list[ref.i] : null;
+}
+function wpRenderObjHandles() {
+  if (!wpEdit.on) return;
+  wpPlaceObjLayer();
+  const W = objLayer.clientWidth, H = objLayer.clientHeight;
+  const cw = wallpaperCanvas.width, ch = wallpaperCanvas.height;
+  objLayer.innerHTML = '';
+  // Big objects underneath, small ones on top, the selected one above all
+  // — so a small bokeh light is never hidden under a large glass pane.
+  const items = [];
+  wpEditableKinds().forEach(kind => wpMaterialize(kind).forEach((o, i) => items.push({ kind, o, i })));
+  const areaOf = ({ kind, o }) => { const meta = WP_OBJ_KINDS[kind]; const base = meta.base === 'max' ? Math.max(W, H) : Math.min(W, H); return meta.shape === 'rect' ? o.s * base * o.s * base * (o.ar || 1) : Math.PI * (o.s * base) ** 2; };
+  const isSelItem = (it) => wpEdit.sel && wpEdit.sel.kind === it.kind && wpEdit.sel.i === it.i;
+  items.sort((a, b) => (isSelItem(a) - isSelItem(b)) || (areaOf(b) - areaOf(a)));
+  items.forEach(({ kind, o, i }) => {
+    {
+      const meta = WP_OBJ_KINDS[kind];
+      const base = meta.base === 'max' ? Math.max(W, H) : Math.min(W, H);
+      const el = document.createElement('div');
+      const isSel = wpEdit.sel && wpEdit.sel.kind === kind && wpEdit.sel.i === i;
+      el.className = 'obj-handle obj-' + meta.shape + (isSel ? ' sel' : '') + (o.pin ? ' pinned' : '');
+      el.dataset.kind = kind;
+      el.dataset.i = i;
+      el.setAttribute('role', 'button');
+      el.setAttribute('aria-label', `${meta.label}${o.pin ? ', pinned' : ''}`);
+      let bw, bh;
+      if (meta.shape === 'rect') { bw = o.s * base; bh = bw * (o.ar || 1); }
+      else { bw = bh = Math.min(2 * o.s * base, Math.min(W, H) * 0.55); }
+      bw = Math.max(bw, 28); bh = Math.max(bh, 28);
+      el.style.width = bw + 'px';
+      el.style.height = bh + 'px';
+      el.style.left = o.x * W + 'px';
+      el.style.top = o.y * H + 'px';
+      el.style.transform = `translate(-50%, -50%) rotate(${meta.shape === 'rect' ? (o.r || 0) : 0}rad)`;
+      if (isSel) {
+        el.insertAdjacentHTML('beforeend', '<span class="obj-knob obj-resize" data-act="resize" aria-hidden="true"></span>');
+        if (meta.shape === 'rect' || kind === 'cloud') el.insertAdjacentHTML('beforeend', '<span class="obj-knob obj-rotate" data-act="rotate" aria-hidden="true"></span>');
+      }
+      objLayer.appendChild(el);
+    }
+  });
+  const sel = wpObjFind(wpEdit.sel);
+  document.getElementById('objSelLabel').textContent = sel ? WP_OBJ_KINDS[wpEdit.sel.kind].label : 'Tap an object';
+  ['btnObjPin', 'btnObjDup', 'btnObjDel', 'objSizeSlider'].forEach(id => { document.getElementById(id).disabled = !sel; });
+  // Size slider on a log scale, so tiny sparkles and full-screen blobs
+  // both get fine control.
+  if (sel && document.activeElement !== document.getElementById('objSizeSlider')) document.getElementById('objSizeSlider').value = Math.round(((Math.log(sel.s) - Math.log(0.004)) / (Math.log(1.2) - Math.log(0.004))) * 100);
+  const pinBtn = document.getElementById('btnObjPin');
+  pinBtn.setAttribute('aria-pressed', sel && sel.pin ? 'true' : 'false');
+  pinBtn.textContent = sel && sel.pin ? '📌 Pinned' : '📌 Pin';
+  const addMenu = document.getElementById('objAddMenu');
+  const kinds = [...new Set([...wpStyleObjectKinds(), 'fxpane', 'fxdrop', 'bokeh', 'sparkle'])];
+  addMenu.innerHTML = kinds.map(k => `<button type="button" data-add="${k}">${WP_OBJ_KINDS[k].label}${k.startsWith('fx') ? ' (effect)' : ''}</button>`).join('');
+}
+let wpEditFrame = 0;
+function wpEditRedraw() {
+  if (wpEditFrame) return;
+  wpEditFrame = requestAnimationFrame(() => { wpEditFrame = 0; drawWallpaperFrame(wallpaperFrozenT); });
+}
+function wpEditChanged() {
+  wpEditRedraw();
+  // let undo/redo pick the edit up like any other control change
+  objLayer.dispatchEvent(new Event('change', { bubbles: true }));
+}
+function enterObjectEdit() {
+  if (wpEdit.on) return;
+  if (!wpEditableKinds().length) {
+    showToast('This style has nothing to move — try Frosted Glass, Liquid Glass, Orbs, Flowing Mesh, or add Bokeh / Sparkles / Glass in Effects');
+    return;
+  }
+  wpEdit.on = true;
+  wpEdit.wasLive = wallpaperState.live;
+  wpEdit.sel = null;
+  stopWallpaperAnimation();
+  wpFreezeObjects = true;
+  objLayer.hidden = false;
+  objToolbar.hidden = false;
+  btnEditObjects.setAttribute('aria-pressed', 'true');
+  document.querySelector('#panel-wallpaper .preview-frame').classList.add('editing-objects');
+  wpRenderObjHandles();
+  drawWallpaperFrame(wallpaperFrozenT);
+}
+function exitObjectEdit() {
+  if (!wpEdit.on) return;
+  wpEdit.on = false;
+  wpFreezeObjects = false;
+  objLayer.hidden = true;
+  objToolbar.hidden = true;
+  document.getElementById('objAddMenu').hidden = true;
+  btnEditObjects.setAttribute('aria-pressed', 'false');
+  document.querySelector('#panel-wallpaper .preview-frame').classList.remove('editing-objects');
+  if (wpEdit.wasLive) startWallpaperAnimation(); else drawWallpaperFrame(wallpaperFrozenT);
+}
+btnEditObjects.addEventListener('click', (e) => { e.stopPropagation(); if (wpEdit.on) exitObjectEdit(); else enterObjectEdit(); });
+document.getElementById('btnObjDone').addEventListener('click', exitObjectEdit);
+
+/* Pointer handling: one finger moves (or resizes/rotates from a knob);
+   two fingers on the same object pinch-resize and twist-rotate. */
+const wpPointers = new Map();
+let wpGesture = null;
+objLayer.addEventListener('pointerdown', (e) => {
+  const handle = e.target.closest('.obj-handle');
+  if (!handle) {
+    wpEdit.sel = null;
+    document.getElementById('objAddMenu').hidden = true;
+    wpRenderObjHandles();
+    return;
+  }
+  e.preventDefault();
+  const ref = { kind: handle.dataset.kind, i: Number(handle.dataset.i) };
+  const o = wpObjFind(ref);
+  if (!o) return;
+  if (!wpEdit.sel || wpEdit.sel.kind !== ref.kind || wpEdit.sel.i !== ref.i) {
+    wpEdit.sel = ref;
+    wpRenderObjHandles();
+    haptic(6);
+  }
+  try { objLayer.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-released pointer */ }
+  wpPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const r = objLayer.getBoundingClientRect();
+  const center = { x: r.left + o.x * r.width, y: r.top + o.y * r.height };
+  const act = e.target.dataset && e.target.dataset.act;
+  if (wpPointers.size === 2) {
+    const [a, b] = [...wpPointers.values()];
+    wpGesture = { type: 'pinch', o, d0: Math.hypot(a.x - b.x, a.y - b.y), a0: Math.atan2(b.y - a.y, b.x - a.x), s0: o.s, r0: o.r || 0 };
+  } else if (act === 'resize') {
+    wpGesture = { type: 'resize', o, center, d0: Math.max(4, Math.hypot(e.clientX - center.x, e.clientY - center.y)), s0: o.s };
+  } else if (act === 'rotate') {
+    wpGesture = { type: 'rotate', o, center, a0: Math.atan2(e.clientY - center.y, e.clientX - center.x), r0: o.r || 0 };
+  } else {
+    wpGesture = { type: 'move', o, sx: e.clientX, sy: e.clientY, x0: o.x, y0: o.y, rw: r.width, rh: r.height };
+  }
+});
+objLayer.addEventListener('pointermove', (e) => {
+  if (!wpPointers.has(e.pointerId) || !wpGesture) return;
+  wpPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const g = wpGesture, o = g.o;
+  if (g.type === 'pinch' && wpPointers.size >= 2) {
+    const [a, b] = [...wpPointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    o.s = clamp(g.s0 * (d / Math.max(1, g.d0)), 0.004, 1.2);
+    o.r = g.r0 + (Math.atan2(b.y - a.y, b.x - a.x) - g.a0);
+  } else if (g.type === 'move') {
+    o.x = clamp(g.x0 + (e.clientX - g.sx) / g.rw, -0.1, 1.1);
+    o.y = clamp(g.y0 + (e.clientY - g.sy) / g.rh, -0.1, 1.1);
+  } else if (g.type === 'resize') {
+    const d = Math.hypot(e.clientX - g.center.x, e.clientY - g.center.y);
+    o.s = clamp(g.s0 * (d / g.d0), 0.004, 1.2);
+  } else if (g.type === 'rotate') {
+    o.r = g.r0 + (Math.atan2(e.clientY - g.center.y, e.clientX - g.center.x) - g.a0);
+  }
+  wpRenderObjHandles();
+  wpEditRedraw();
+});
+function wpEndPointer(e) {
+  if (!wpPointers.has(e.pointerId)) return;
+  wpPointers.delete(e.pointerId);
+  if (wpPointers.size === 0 && wpGesture) { wpGesture = null; wpEditChanged(); }
+  else if (wpPointers.size === 1 && wpGesture && wpGesture.type === 'pinch') {
+    const [p] = [...wpPointers.values()];
+    const r = objLayer.getBoundingClientRect();
+    wpGesture = { type: 'move', o: wpGesture.o, sx: p.x, sy: p.y, x0: wpGesture.o.x, y0: wpGesture.o.y, rw: r.width, rh: r.height };
+  }
+}
+objLayer.addEventListener('pointerup', wpEndPointer);
+objLayer.addEventListener('pointercancel', wpEndPointer);
+/* Keyboard: arrows nudge, [ ] resize, R rotates, Delete removes. */
+document.addEventListener('keydown', (e) => {
+  if (!wpEdit.on) return;
+  if (e.key === 'Escape') { exitObjectEdit(); return; }
+  const o = wpObjFind(wpEdit.sel);
+  if (!o || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const step = e.shiftKey ? 0.05 : 0.01;
+  let used = true;
+  if (e.key === 'ArrowLeft') o.x -= step; else if (e.key === 'ArrowRight') o.x += step;
+  else if (e.key === 'ArrowUp') o.y -= step; else if (e.key === 'ArrowDown') o.y += step;
+  else if (e.key === ']') o.s *= 1.08; else if (e.key === '[') o.s /= 1.08;
+  else if (e.key.toLowerCase() === 'r') o.r = (o.r || 0) + (e.shiftKey ? -0.1 : 0.1);
+  else if (e.key === 'Delete' || e.key === 'Backspace') { document.getElementById('btnObjDel').click(); }
+  else used = false;
+  if (used) { e.preventDefault(); wpRenderObjHandles(); wpEditChanged(); }
+});
+document.getElementById('objSizeSlider').addEventListener('input', (e) => {
+  const o = wpObjFind(wpEdit.sel);
+  if (!o) return;
+  o.s = Math.exp(Math.log(0.004) + (Number(e.target.value) / 100) * (Math.log(1.2) - Math.log(0.004)));
+  wpRenderObjHandles();
+  wpEditRedraw();
+});
+document.getElementById('objSizeSlider').addEventListener('change', wpEditChanged);
+document.getElementById('btnObjPin').addEventListener('click', () => {
+  const o = wpObjFind(wpEdit.sel);
+  if (!o) return;
+  o.pin = !o.pin;
+  showToast(o.pin ? 'Pinned — it stays put in the live wallpaper' : 'Unpinned — it drifts near its spot');
+  wpRenderObjHandles();
+  wpEditChanged();
+});
+document.getElementById('btnObjDup').addEventListener('click', () => {
+  const o = wpObjFind(wpEdit.sel);
+  if (!o) return;
+  const list = wallpaperState.objects[wpEdit.sel.kind];
+  const copy = Object.assign({}, o, { x: clamp(o.x + 0.06, 0, 1), y: clamp(o.y + 0.06, 0, 1), ph: Math.random() * 6.283 });
+  list.push(copy);
+  wpEdit.sel = { kind: wpEdit.sel.kind, i: list.length - 1 };
+  wpRenderObjHandles();
+  wpEditChanged();
+});
+document.getElementById('btnObjDel').addEventListener('click', () => {
+  if (!wpObjFind(wpEdit.sel)) return;
+  wallpaperState.objects[wpEdit.sel.kind].splice(wpEdit.sel.i, 1);
+  wpEdit.sel = null;
+  wpRenderObjHandles();
+  wpEditChanged();
+});
+document.getElementById('btnObjReset').addEventListener('click', () => {
+  wallpaperState.objects = null;
+  wpEdit.sel = null;
+  wpRenderObjHandles();
+  wpEditChanged();
+  showToast('Back to the automatic layout');
+});
+{
+  // Page-level, so the scrolling toolbar can't clip it.
+  const menu = document.getElementById('objAddMenu');
+  document.body.appendChild(menu);
+}
+document.getElementById('btnObjAdd').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById('objAddMenu');
+  menu.hidden = !menu.hidden;
+  if (!menu.hidden) {
+    const r = e.currentTarget.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, r.top - menu.offsetHeight - 6) + 'px';
+  }
+});
+document.addEventListener('pointerdown', (e) => {
+  const menu = document.getElementById('objAddMenu');
+  if (!menu.hidden && !e.target.closest('#objAddMenu, #btnObjAdd')) menu.hidden = true;
+});
+document.getElementById('objAddMenu').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-add]');
+  if (!b) return;
+  const kind = b.dataset.add;
+  const fx = wallpaperState.effects = Object.assign({}, WP_FX_DEFAULT, wallpaperState.effects || {});
+  // Adding an effect object switches that effect on.
+  if (kind === 'fxpane' && fx.glass !== 'frosted') fx.glass = 'frosted';
+  if (kind === 'fxdrop' && fx.glass !== 'liquid') fx.glass = 'liquid';
+  if (kind === 'bokeh' && !(fx.bokeh > 0)) fx.bokeh = 0.4;
+  if (kind === 'sparkle' && !(fx.sparkles > 0)) fx.sparkles = 0.35;
+  const list = wpMaterialize(kind);
+  const proto = wpGenObjects(kind, 1, wpAutoSize(kind), Math.random().toString(36).slice(2))[0];
+  list.push(Object.assign(proto, { x: 0.5, y: 0.5, c: list.length }));
+  wpEdit.sel = { kind, i: list.length - 1 };
+  document.getElementById('objAddMenu').hidden = true;
+  syncFxPanel('wallpaper');
+  wpRenderObjHandles();
+  wpEditChanged();
+});
+window.addEventListener('resize', () => { if (wpEdit.on) wpRenderObjHandles(); });
+
 function initWallpaperStudio() {
   if (!wallpaperState.seed) newWallpaperSeed();
+  mountFxPanel('wallpaper', 'Glass panes, bubbles, bokeh and sparkles can be moved: tap ✥ on the preview.');
   renderWallpaperStyleCats();
   renderWallpaperStyleGrid();
   renderWallpaperLooks();
@@ -5303,6 +5955,7 @@ function openFullscreenPreview(kind) {
     fullscreenContent.style.backgroundImage = layers.join(', ');
     fullscreenContent.style.backgroundBlendMode = meshState.blendMode;
   } else if (kind === 'wallpaper') {
+    exitObjectEdit();
     wallpaperCanvas.classList.add('fullscreen-canvas');
     fullscreenContent.appendChild(wallpaperCanvas);
     resizeWallpaperCanvas();

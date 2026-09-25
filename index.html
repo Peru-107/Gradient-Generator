@@ -400,6 +400,23 @@
               <div class="safe-zone-band safe-zone-icons"><span>Icons</span></div>
             </div>
             <button class="fullscreen-btn" id="btnFullscreenWallpaper" title="Full screen preview" aria-label="Full screen preview">⤢</button>
+            <button class="fullscreen-btn stage-btn-3 obj-edit-btn" id="btnEditObjects" title="Move objects" aria-label="Move objects" aria-pressed="false">✥</button>
+            <div class="obj-layer" id="wallpaperObjLayer" hidden></div>
+            <div class="obj-toolbar" id="wallpaperObjToolbar" hidden role="toolbar" aria-label="Object tools">
+              <span class="obj-sel-label" id="objSelLabel">Tap an object</span>
+              <div class="obj-tools">
+                <div class="obj-add-wrap">
+                  <button type="button" id="btnObjAdd" aria-haspopup="menu">+ Add</button>
+                  <div class="obj-add-menu" id="objAddMenu" role="menu" hidden></div>
+                </div>
+                <label class="obj-size" title="Size"><span aria-hidden="true">⤡</span><input type="range" id="objSizeSlider" min="0" max="100" value="50" aria-label="Object size"></label>
+                <button type="button" id="btnObjPin" aria-pressed="false">📌 Pin</button>
+                <button type="button" id="btnObjDup" title="Duplicate" aria-label="Duplicate">⧉</button>
+                <button type="button" id="btnObjDel" title="Delete" aria-label="Delete">🗑</button>
+                <button type="button" id="btnObjReset" title="Back to the automatic layout" aria-label="Reset layout">↺</button>
+                <button type="button" id="btnObjDone" class="obj-done">Done</button>
+              </div>
+            </div>
             <button class="fullscreen-btn stage-btn-2 mockup-btn" data-mockup="wallpaper" title="Show on a device" aria-label="Show on a device"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 18.5h3" stroke-linecap="round"/></svg></button>
           </div>
 
@@ -511,44 +528,12 @@
               <select id="wallpaperFromPalette" class="select" aria-label="Use a saved palette"><option value="">Use a saved palette…</option></select>
               <button id="btnExtractPaletteFromWallpaper" class="btn btn-sm" title="Send these colors to Palettes">🎨 To Palettes</button>
             </div>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label">Effects</label>
-            <div class="wp-field">
-              <span class="wp-save-label">Glass</span>
-              <select id="wallpaperGlassSelect" class="select">
-                <option value="none">None</option>
-                <option value="frosted">Frosted panes</option>
-                <option value="fluted">Fluted glass</option>
-                <option value="liquid">Liquid drops</option>
-                <option value="prism">Prism light</option>
-              </select>
-            </div>
-            <div class="wp-param">
-              <label class="control-label-row wp-param-label" for="wallpaperGrainSlider"><span>Grain</span><span id="wallpaperGrainValue" class="control-value">0%</span></label>
-              <input type="range" id="wallpaperGrainSlider" min="0" max="100" value="0" class="slider">
-            </div>
-            <div class="wp-param">
-              <label class="control-label-row wp-param-label" for="wallpaperVignetteSlider"><span>Vignette</span><span id="wallpaperVignetteValue" class="control-value">0%</span></label>
-              <input type="range" id="wallpaperVignetteSlider" min="0" max="100" value="0" class="slider">
-            </div>
-            <div class="wp-param">
-              <label class="control-label-row wp-param-label" for="wallpaperGlowSlider"><span>Glow</span><span id="wallpaperGlowValue" class="control-value">0%</span></label>
-              <input type="range" id="wallpaperGlowSlider" min="0" max="100" value="0" class="slider">
-            </div>
-            <label class="control-label-row wp-toggle"><span>Duotone</span>
-              <label class="oklch-switch"><input type="checkbox" id="wallpaperDuotoneToggle"><span></span></label>
-            </label>
-            <div class="duotone-colors" id="wallpaperDuotoneColors" hidden>
-              <input type="color" id="wallpaperDuotoneShadow" value="#160f2e" aria-label="Duotone shadow color" title="Shadows">
-              <input type="color" id="wallpaperDuotoneHighlight" value="#ff9ecf" aria-label="Duotone highlight color" title="Highlights">
-            </div>
             <label class="control-label-row wp-toggle"><span>Tint by time of day</span>
               <label class="oklch-switch"><input type="checkbox" id="wallpaperTimeOfDayToggle"><span></span></label>
             </label>
-            <button id="btnRemixWallpaper" class="btn btn-sm">🔀 Surprise effects</button>
           </div>
+
+          <div class="control-card fx-card" data-fx="wallpaper"></div>
 
           <div class="control-card">
             <label class="control-label">Layer a second style</label>
