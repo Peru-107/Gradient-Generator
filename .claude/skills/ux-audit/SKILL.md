@@ -262,7 +262,15 @@ Before shipping a design decision, check the argument, not just the pixels:
 - Primary per studio gets full width and a unique look, on every width.
 - Empty states are designed states (centered, with a clear next step).
 - Advanced/Pro features follow progressive disclosure: visible, and an
-  unlicensed attempt reverts + toast + Pro modal.
+  unlicensed attempt reverts + toast + Pro modal. Mark Pro items in place
+  (a PRO tag on the thumbnail) rather than hiding them behind a mode
+  switch — the "Advanced Mode" toggle was removed for this reason.
+- One export per intent: two buttons that both mean "save it animated"
+  (Record Video + Live HTML File) is redundancy, not choice. Settings
+  that only ever apply automatically (loop-perfect) shouldn't be toggles.
+- An interaction must work where the person actually is: touch/motion
+  features that only worked inside an exported file read as broken. On
+  iOS, motion sensors need `requestPermission()` from a tap.
 
 ## Sources
 

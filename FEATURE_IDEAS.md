@@ -140,6 +140,19 @@ Chosen from an interactive preview of four directions; all four shipped as theme
 82. ✅ **Done** — **APK: real save to phone storage** — exports go straight into Pictures/Movies/Download › Gradii through a native MediaStore plugin (DeviceSaver) instead of the Share sheet.
 83. ✅ **Done** — **Different colors every launch** — per-launch crypto-seeded randomness (the Android WebView was repeating the same `Math.random` sequence), and the app opens on a fresh random design instead of the same violet→pink every time.
 
+## Phase 7 — Wallpaper overhaul
+
+84. ✅ **Done** — **20 new wallpaper styles** in a thumbnail gallery (Glass: Frosted, Fluted, Liquid, Prism · Abstract: Grainy Poster, Paper Layers, Silk, Ink, Orbs, Holographic, Topographic · Patterns: Bauhaus, Halftone, Retro Stripes, Truchet, Iso Cubes, Flow Field, Seigaiha, Terrazzo, Synthwave). 7 free, the rest Pro.
+85. ✅ **Done** — **Per-style controls** (Amount, Size, Softness, Angle, Line weight, Depth — only the ones a style uses).
+86. ✅ **Done** — **Background choice** (Auto/Dark/Light/Color) — fixes "there's always black".
+87. ✅ **Done** — **Harmony + saved palettes**, **color locks**, **Colors-only / Layout-only shuffles**.
+88. ✅ **Done** — **Layer a second style** with strength and blend mode.
+89. ✅ **Done** — **Looks**: save your own, plus built-in packs.
+90. ✅ **Done** — **Live wallpaper = one video export**, 5/10s free, 15/30s Pro, always a seamless loop (replaces Live HTML File, Record Video and the Loop-perfect toggle).
+91. ✅ **Done** — **Touch & motion in the app itself** (tap ripples, double-tap pause, shake, tilt with iOS permission) — they used to only work inside the exported HTML file.
+92. ✅ **Done** — **Glass, grain, vignette and glow for Gradient and Mesh**.
+93. 🗑 **Removed** — Live HTML File, audio-reactive, battery low-power mode, loop toggle, Advanced Mode switch, Chapters, Recipe files, separate seasonal/day toggles (now one "On open" choice).
+
 ## The big one
 
 49. **Community gallery** (Supabase-backed) — browse, like, and remix other users' saved designs. The one feature here that's a real backend build, not a static-app addition — deliberately sequenced after everything else, per earlier discussion.

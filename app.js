@@ -843,6 +843,7 @@ let gradientState = {
   temperature: 0,
   repeat: 1,
   dither: false,
+  fx: { glass: 'none', glassAmount: 0.7, grain: 0, vignette: 0, glow: 0 },
   stops: [
     { color: '#6d5dfc', pos: 0 },
     { color: '#ff6b9d', pos: 100 },
@@ -922,7 +923,8 @@ function buildGradientCss(state) {
 function renderGradientPreview() {
   const css = buildGradientCss(gradientState);
   gradientPreview.style.background = css;
-  cssOutput.textContent = `background: ${css};`;
+  cssOutput.textContent = `background: ${css};` + (studioFxActive(gradientState.fx) ? '\n/* Glass, grain & other effects are in the PNG, not in CSS */' : '');
+  scheduleStudioFx('gradient');
 }
 
 function renderControlVisibility() {
@@ -1020,6 +1022,7 @@ function randomizeGradient() {
 }
 
 function syncGradientControlsFromState() {
+  if (typeof syncFxCard === 'function') syncFxCard('gradient');
   angleSlider.value = gradientState.angle;
   angleValue.textContent = `${gradientState.angle}°`;
   posXSlider.value = gradientState.posX;
@@ -1031,7 +1034,6 @@ function syncGradientControlsFromState() {
   document.querySelectorAll('#shapeSeg .seg-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.shape === gradientState.shape));
   document.getElementById('gradientOklchToggle').checked = !!gradientState.oklch;
-  document.getElementById('gradientDitherToggle').checked = !!gradientState.dither;
   const temp = gradientState.temperature || 0;
   document.getElementById('gradientTempSlider').value = temp;
   document.getElementById('gradientTempValue').textContent = temp > 0 ? `+${temp}` : `${temp}`;
@@ -1263,6 +1265,7 @@ document.getElementById('btnDownloadPng').addEventListener('click', () => {
   canvas.height = size.h;
   const ctx = canvas.getContext('2d');
   drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
+  wpApplyEffects(ctx, canvas.width, canvas.height, gradientState.fx, 0);
   if (gradientState.dither) ditherCanvas(ctx, canvas.width, canvas.height);
   drawWatermark(ctx, canvas.width, canvas.height);
   downloadCanvasPng(canvas, `gradient-${size.w}x${size.h}.png`);
@@ -1277,6 +1280,7 @@ document.getElementById('btnCopyGradientImage').addEventListener('click', () => 
   canvas.height = size.h;
   const ctx = canvas.getContext('2d');
   drawGradientToCanvas(ctx, canvas.width, canvas.height, gradientState);
+  wpApplyEffects(ctx, canvas.width, canvas.height, gradientState.fx, 0);
   if (gradientState.dither) ditherCanvas(ctx, canvas.width, canvas.height);
   drawWatermark(ctx, canvas.width, canvas.height);
   copyCanvasToClipboard(canvas);
@@ -2014,6 +2018,7 @@ const MESH_PRESETS = [
 ];
 
 let meshState = {
+  fx: { glass: 'none', glassAmount: 0.7, grain: 0, vignette: 0, glow: 0 },
   baseColor: '#0f1020',
   blendMode: 'normal',
   family: 'scatter',
@@ -2201,9 +2206,11 @@ function renderMeshPreview() {
   meshCssOutput.textContent =
     `background-color: ${meshState.baseColor};\n` +
     `background-image:\n${cssLayers};\n` +
-    `background-blend-mode: ${meshState.blendMode};`;
+    `background-blend-mode: ${meshState.blendMode};` +
+    (studioFxActive(meshState.fx) ? '\n/* Glass, grain & other effects are in the PNG, not in CSS */' : '');
 
   syncMeshDragHandles();
+  scheduleStudioFx('mesh');
 }
 
 /* Cheap position/color refresh for the existing drag handles — called on
@@ -2306,6 +2313,7 @@ function startMeshBlobDrag(e, index, handle) {
 }
 
 function renderMeshBlobsList() {
+  if (typeof syncFxCard === 'function') syncFxCard('mesh');
   meshBlobsList.innerHTML = '';
   meshState.points.forEach((p, i) => {
     const row = document.createElement('div');
@@ -2473,6 +2481,7 @@ document.getElementById('btnDownloadMeshPng').addEventListener('click', () => {
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   drawMeshToCanvas(ctx, w, h, meshState);
+  wpApplyEffects(ctx, w, h, meshState.fx, 0);
   drawWatermark(ctx, w, h);
   downloadCanvasPng(canvas, `mesh-${w}x${h}.png`);
   showToast('Mesh gradient PNG downloaded');
@@ -2487,6 +2496,7 @@ document.getElementById('btnCopyMeshImage').addEventListener('click', () => {
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   drawMeshToCanvas(ctx, w, h, meshState);
+  wpApplyEffects(ctx, w, h, meshState.fx, 0);
   drawWatermark(ctx, w, h);
   copyCanvasToClipboard(canvas);
 });
@@ -2496,20 +2506,18 @@ document.getElementById('btnCopyMeshImage').addEventListener('click', () => {
    become the moving color set, so a design you like here doesn't have
    to be manually rebuilt swatch-by-swatch over there. */
 document.getElementById('btnPromoteMeshToWallpaper').addEventListener('click', () => {
-  wallpaperState.pattern = 'flowingMesh';
-  wallpaperState.colors = [meshState.baseColor, ...meshState.points.map(p => p.color)];
-  wallpaperPatternSelect.value = 'flowingMesh';
-  renderWallpaperColorsList();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  const colors = [meshState.baseColor, ...meshState.points.map(p => p.color)].slice(0, 6);
+  wallpaperState = normalizeWallpaperState(Object.assign({}, wallpaperState, { pattern: 'flowingMesh', colors, locked: colors.map(() => false) }));
+  applyWallpaperStateToUI();
   setActiveTab('wallpaper');
   showToast('Mesh sent to Wallpaper Studio');
 });
 
 /* ==========================================================================
    WALLPAPER STUDIO
-   Pattern renderers below are intentionally pure (only args, no closures)
-   so they can be serialized via Function.prototype.toString() straight
-   into the standalone "Live HTML File" export — see exportWallpaperHtml().
+   The original ("Classic" and "Motion") pattern renderers. They keep their
+   (ctx, w, h, t, colors, speed) signature; the newer styles and the style
+   registry are further down (WP_STYLES).
    ========================================================================== */
 
 function wpHexToRgba(hex, alpha) {
@@ -2526,7 +2534,7 @@ function wpDrawFlowingMesh(ctx, w, h, t, colors, speed) {
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
   blobs.forEach((color, i) => {
     const n = blobs.length;
     const phase = (i / n) * Math.PI * 2;
@@ -2548,7 +2556,7 @@ function wpDrawAuroraFlow(ctx, w, h, t, colors, speed) {
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
   bands.forEach((color, i) => {
     const freq = 1.4 + i * 0.35;
     const amp = h * (0.06 + 0.02 * i);
@@ -2576,7 +2584,7 @@ function wpDrawRadialPulse(ctx, w, h, t, colors, speed) {
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
   pulses.forEach((color, i) => {
     const n = pulses.length;
     const angle = (i / n) * Math.PI * 2 + t * speed * 0.15;
@@ -2636,10 +2644,7 @@ function wpDrawWaveBands(ctx, w, h, t, colors, speed) {
   });
 }
 
-/* Linear-interpolate two hex colors at t in [0, 1]. Self-contained (no
-   dependency on the app's general hexToHsl/hslToHex helpers) for the
-   same reason as wpHexToHsl/wpHslToHex: every wp*-prefixed function must
-   serialize standalone into exportWallpaperHtml()'s output. */
+/* Linear-interpolate two hex colors at t in [0, 1]. */
 function wpLerpColor(hexA, hexB, t) {
   const a = hexA.replace('#', ''); const b = hexB.replace('#', '');
   const af = a.length === 3 ? a.split('').map(c => c + c).join('') : a;
@@ -2712,7 +2717,7 @@ function wpDrawRipple(ctx, w, h, t, colors, speed) {
   const ringColors = colors.length > 1 ? colors.slice(1) : colors;
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
   const maxR = Math.max(w, h) * 0.7;
   const ringGap = maxR / 6;
   ringColors.forEach((color, ci) => {
@@ -2782,7 +2787,7 @@ function wpDrawKaleidoscope(ctx, w, h, t, colors, speed) {
   const segments = 8;
   const wedgeAngle = (Math.PI * 2) / segments;
   const reach = Math.max(w, h);
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
   for (let s = 0; s < segments; s++) {
     ctx.save();
     ctx.translate(cx, cy);
@@ -2850,7 +2855,7 @@ function wpDrawLavaLamp(ctx, w, h, t, colors, speed) {
   const blobs = colors.length > 1 ? colors.slice(1) : colors;
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
   blobs.forEach((color, i) => {
     const n = blobs.length;
     const cycle = (t * speed * 0.08 + i / n) % 1;
@@ -2903,19 +2908,86 @@ function wpDrawMoire(ctx, w, h, t, colors, speed) {
   // two grids than a first pass used — near-identical grids barely beat
   // against each other at all; this is tuned to actually read as
   // interference bands rather than a single set of parallel lines.
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = wpGlowOp(colors[0]);
   drawGrid(t * speed * 0.1, 1, lineA, 0.75);
   drawGrid(-t * speed * 0.13 + 0.5, 1.15, lineB, 0.75);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
 }
 
-/* A small tileable noise swatch, regenerated fresh each call rather than
-   cached, so this stays a pure function safe to serialize into the
-   standalone HTML export (see exportWallpaperHtml()) — no module-level
-   state to lose in translation. 128px is cheap to generate every frame
-   and, being pure white noise rather than a repeating photo texture,
-   tiles with no visible seam at any output resolution. */
+/* ==========================================================================
+   Shared canvas effects — wallpaper, gradient and mesh
+   ----------------------------------------------------------------
+   Nothing here uses ctx.filter: Safari (so every iPad/iPhone) ignores it,
+   which is why blurs and glows used to come out wrong or not at all on
+   iPad. Blur is a downscale-then-upscale through a reusable offscreen
+   buffer instead, which is also far cheaper per frame.
+   ========================================================================== */
+
+/* Reusable offscreen canvases, keyed by purpose, so a 60fps preview isn't
+   allocating a fresh full-size canvas every frame. */
+const WP_BUFS = {};
+function wpBuf(name, w, h) {
+  let c = WP_BUFS[name];
+  if (!c) c = WP_BUFS[name] = document.createElement('canvas');
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return c;
+}
+function wpCopyOf(name, src, w, h) {
+  const c = wpBuf(name, w, h);
+  const cx = c.getContext('2d');
+  cx.globalCompositeOperation = 'copy';
+  cx.drawImage(src, 0, 0, w, h);
+  cx.globalCompositeOperation = 'source-over';
+  return c;
+}
+/* Gaussian-ish blur: shrink by a factor tied to the radius, then scale
+   back up with smoothing. radiusFrac is a fraction of the short side. */
+function wpBlurred(name, src, w, h, radiusFrac) {
+  const f = Math.max(2, Math.round(Math.min(w, h) * radiusFrac));
+  const sw = Math.max(1, Math.round(w / f)), sh = Math.max(1, Math.round(h / f));
+  const small = wpBuf(name + ':s', sw, sh);
+  const sc = small.getContext('2d');
+  sc.imageSmoothingEnabled = true;
+  sc.imageSmoothingQuality = 'high';
+  sc.globalCompositeOperation = 'copy';
+  sc.drawImage(src, 0, 0, sw, sh);
+  const out = wpBuf(name + ':o', w, h);
+  const oc = out.getContext('2d');
+  oc.imageSmoothingEnabled = true;
+  oc.imageSmoothingQuality = 'high';
+  oc.globalCompositeOperation = 'copy';
+  oc.drawImage(small, 0, 0, w, h);
+  return out;
+}
+/* drawImage with the source rectangle clamped to the image — older
+   Safari draws nothing at all when any part of the source rect falls
+   outside the image, instead of clipping like the spec says. */
+function wpDrawSub(ctx, img, sx, sy, sw, sh, dx, dy, dw, dh) {
+  const iw = img.width, ih = img.height;
+  const kx = dw / sw, ky = dh / sh;
+  if (sx < 0) { dx -= sx * kx; dw += sx * kx; sw += sx; sx = 0; }
+  if (sy < 0) { dy -= sy * ky; dh += sy * ky; sh += sy; sy = 0; }
+  if (sx + sw > iw) { const o = sx + sw - iw; sw -= o; dw -= o * kx; }
+  if (sy + sh > ih) { const o = sy + sh - ih; sh -= o; dh -= o * ky; }
+  if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+function wpRoundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* Film grain from four pre-made noise tiles cycled over time (so grain
+   shimmers like film in a live wallpaper), scaled up on large canvases
+   so the grain stays visible instead of dissolving at 3× pixel ratio. */
+let WP_NOISE_TILES = null;
 function wpMakeNoiseCanvas(size) {
   const c = document.createElement('canvas');
   c.width = size; c.height = size;
@@ -2929,35 +3001,246 @@ function wpMakeNoiseCanvas(size) {
   nctx.putImageData(imgData, 0, 0);
   return c;
 }
+function wpGrain(ctx, w, h, amount, t) {
+  if (!(amount > 0)) return;
+  if (!WP_NOISE_TILES) WP_NOISE_TILES = [0, 1, 2, 3].map(() => wpMakeNoiseCanvas(160));
+  // t can be negative (the seamless-loop crossfade renders frames from
+  // just before the start), so wrap the index into 0–3 either way.
+  const frame = Number.isFinite(t) ? Math.floor(t * 12) : 0;
+  const tile = WP_NOISE_TILES[((frame % 4) + 4) % 4];
+  const pattern = ctx.createPattern(tile, 'repeat');
+  const scale = Math.max(1, Math.min(w, h) / 700);
+  if (scale > 1 && pattern.setTransform && typeof DOMMatrix !== 'undefined') pattern.setTransform(new DOMMatrix().scale(scale));
+  ctx.save();
+  ctx.globalCompositeOperation = 'overlay';
+  ctx.globalAlpha = Math.min(0.7, amount);
+  ctx.fillStyle = pattern;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+function wpVignette(ctx, w, h, amount) {
+  if (!(amount > 0)) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  const r = Math.max(w, h) * 0.75;
+  const grad = ctx.createRadialGradient(w / 2, h / 2, r * (1 - amount * 0.55), w / 2, h / 2, r);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, `rgba(0,0,0,${Math.min(0.85, amount)})`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+function wpGlow(ctx, w, h, amount) {
+  if (!(amount > 0)) return;
+  const b = wpBlurred('glow', ctx.canvas, w, h, 0.02 + 0.04 * amount);
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = Math.min(1, amount);
+  ctx.drawImage(b, 0, 0, w, h);
+  ctx.restore();
+}
 
-/* Post-processing pass applied on top of a finished pattern frame.
-   Order matters: glow (adds light) and duotone (remaps the whole tonal
-   range) happen first since they're transformations of the image itself;
-   vignette and grain are surface treatments layered on top of that,
-   grain always last so it reads as texture over the final image rather
-   than something duotone/vignette then wash out. Each effect is a no-op
-   at 0/off so callers can always pass wallpaperState.effects unchanged. */
-function wpApplyEffects(ctx, w, h, effects) {
-  if (!effects) return;
-  const grain = effects.grain || 0;
-  const vignette = effects.vignette || 0;
-  const glow = effects.glow || 0;
-  const duotone = effects.duotone;
-
-  if (glow > 0) {
+/* ---- glass: frosted panes, fluted/reeded, liquid drops, prism light ----
+   Each works on whatever is already on ctx (it copies it first), so the
+   same functions serve as wallpaper styles (over a moving color field)
+   and as effects over a gradient or mesh. p holds 0–1 knobs. */
+function wpIsLightHex(hex) {
+  const { r, g, b } = hexToRgb(hex || '#000000');
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.6;
+}
+function wpGlassPanes(ctx, w, h, T, p, rnd, amount) {
+  const m = Math.min(w, h);
+  const base = wpCopyOf('panes', ctx.canvas, w, h);
+  const blurred = wpBlurred('panesBlur', base, w, h, 0.015 + 0.05 * p.softness);
+  const n = 2 + Math.round(p.density * 4);
+  for (let i = 0; i < n; i++) {
+    const pw = m * (0.32 + 0.4 * p.size) * (0.7 + 0.6 * rnd(i * 7 + 1));
+    const ph = pw * (0.6 + 0.9 * rnd(i * 7 + 2));
+    const cx = w * (0.12 + 0.76 * rnd(i * 7 + 3)) + Math.sin(T * 0.25 + i) * m * 0.05;
+    const cy = h * (0.1 + 0.8 * rnd(i * 7 + 4)) + Math.cos(T * 0.2 + i * 1.7) * m * 0.05;
+    const rot = (rnd(i * 7 + 5) - 0.5) * 0.7 + Math.sin(T * 0.1 + i) * 0.05;
+    const r = Math.min(pw, ph) * 0.16;
     ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = Math.min(1, glow);
-    ctx.filter = `blur(${Math.round(Math.min(w, h) * 0.05 * glow)}px)`;
-    ctx.drawImage(ctx.canvas, 0, 0, w, h);
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.shadowColor = `rgba(0,0,0,${0.18 + 0.15 * amount})`;
+    ctx.shadowBlur = m * 0.045;
+    ctx.shadowOffsetY = m * 0.018;
+    wpRoundRect(ctx, -pw / 2, -ph / 2, pw, ph, r);
+    // Opaque fill only to cast the shadow — the inside is fully repainted
+    // below (a near-transparent fill would cast a near-invisible shadow).
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.clip();
+    ctx.rotate(-rot);
+    ctx.translate(-cx, -cy);
+    ctx.drawImage(base, 0, 0, w, h);
+    ctx.globalAlpha = 0.55 + 0.45 * amount;
+    ctx.drawImage(blurred, 0, 0, w, h);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = `rgba(255,255,255,${0.06 + 0.1 * amount})`;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    wpRoundRect(ctx, -pw / 2, -ph / 2, pw, ph, r);
+    const g = ctx.createLinearGradient(-pw / 2, -ph / 2, pw / 2, ph / 2);
+    g.addColorStop(0, 'rgba(255,255,255,0.7)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.06)');
+    g.addColorStop(1, 'rgba(255,255,255,0.35)');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = Math.max(1, m * 0.003);
+    ctx.stroke();
     ctx.restore();
   }
+}
+function wpFlutedGlass(ctx, w, h, p, amount) {
+  const base = wpCopyOf('fluted', ctx.canvas, w, h);
+  const rw = Math.max(4, w * (0.02 + 0.07 * p.size));
+  const squeeze = 1.5 + 2.5 * p.depth;
+  ctx.save();
+  for (let x = 0; x < w; x += rw) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, 0, rw + 0.5, h);
+    ctx.clip();
+    // Each rib shows a squeezed, mirrored slice of what's behind it.
+    ctx.translate(x + rw, 0);
+    ctx.scale(-1, 1);
+    const sx = x + rw / 2 - (rw * squeeze) / 2;
+    ctx.globalAlpha = 0.5 + 0.5 * amount;
+    wpDrawSub(ctx, base, sx, 0, rw * squeeze, h, 0, 0, rw, h);
+    ctx.restore();
+    const g = ctx.createLinearGradient(x, 0, x + rw, 0);
+    g.addColorStop(0, `rgba(0,0,0,${0.16 * amount})`);
+    g.addColorStop(0.3, `rgba(255,255,255,${0.16 * amount})`);
+    g.addColorStop(0.55, 'rgba(255,255,255,0)');
+    g.addColorStop(1, `rgba(0,0,0,${0.12 * amount})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(x, 0, rw + 0.5, h);
+  }
+  ctx.restore();
+}
+function wpLiquidDrops(ctx, w, h, T, p, rnd, amount) {
+  const m = Math.min(w, h);
+  const base = wpCopyOf('drops', ctx.canvas, w, h);
+  const n = 3 + Math.round(p.density * 6);
+  const k = 1.3 + 0.5 * p.depth;
+  for (let i = 0; i < n; i++) {
+    const r = m * (0.07 + 0.14 * p.size) * (0.6 + 0.8 * rnd(i * 5 + 1));
+    const cx = w * (0.5 + 0.4 * Math.sin(T * 0.21 * (0.6 + rnd(i * 5 + 2)) + rnd(i * 5 + 3) * 6.28));
+    const cy = h * (0.5 + 0.42 * Math.cos(T * 0.17 * (0.6 + rnd(i * 5 + 4)) + i * 1.3));
+    ctx.save();
+    ctx.shadowColor = `rgba(0,0,0,${0.2 * amount})`;
+    ctx.shadowBlur = r * 0.35;
+    ctx.shadowOffsetY = r * 0.12;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.clip();
+    ctx.drawImage(base, 0, 0, w, h);
+    wpDrawSub(ctx, base, cx - r / k, cy - r / k, (2 * r) / k, (2 * r) / k, cx - r, cy - r, 2 * r, 2 * r);
+    const edge = ctx.createRadialGradient(cx, cy, r * 0.55, cx, cy, r);
+    edge.addColorStop(0, 'rgba(0,0,0,0)');
+    edge.addColorStop(1, `rgba(0,0,0,${0.28 * amount})`);
+    ctx.fillStyle = edge;
+    ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r);
+    ctx.restore();
+    const hx = cx - r * 0.35, hy = cy - r * 0.42;
+    const hl = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * 0.55);
+    hl.addColorStop(0, `rgba(255,255,255,${0.55 * amount + 0.15})`);
+    hl.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hl;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,255,255,${0.2 + 0.25 * amount})`;
+    ctx.lineWidth = Math.max(1, m * 0.0025);
+    ctx.stroke();
+  }
+}
+function wpPrismBeams(ctx, w, h, T, p, amount) {
+  const m = Math.min(w, h);
+  const buf = wpBuf('prism', w, h);
+  const bc = buf.getContext('2d');
+  bc.clearRect(0, 0, w, h);
+  const ox = w * (0.3 + 0.05 * Math.sin(T * 0.2)), oy = h * (0.42 + 0.04 * Math.cos(T * 0.17));
+  const base = (p.angle * 360 - 20 + Math.sin(T * 0.15) * 6) * Math.PI / 180;
+  const spread = (14 + 40 * p.size) * Math.PI / 180;
+  const far = Math.hypot(w, h) * 1.2;
+  bc.globalCompositeOperation = 'lighter';
+  // incoming white beam
+  bc.fillStyle = 'rgba(255,255,255,0.35)';
+  bc.beginPath();
+  bc.moveTo(ox, oy);
+  bc.lineTo(ox - far * Math.cos(base - 0.35), oy - far * Math.sin(base - 0.35) - m * 0.02);
+  bc.lineTo(ox - far * Math.cos(base - 0.35), oy - far * Math.sin(base - 0.35) + m * 0.02);
+  bc.closePath();
+  bc.fill();
+  // outgoing spectrum fan
+  const bands = 7;
+  for (let k = 0; k < bands; k++) {
+    const a0 = base + (k / bands - 0.5) * spread, a1 = base + ((k + 1) / bands - 0.5) * spread;
+    bc.fillStyle = `hsla(${k * 45}, 100%, 62%, 0.65)`;
+    bc.beginPath();
+    bc.moveTo(ox, oy);
+    bc.lineTo(ox + far * Math.cos(a0), oy + far * Math.sin(a0));
+    bc.lineTo(ox + far * Math.cos(a1), oy + far * Math.sin(a1));
+    bc.closePath();
+    bc.fill();
+  }
+  const soft = wpBlurred('prismBlur', buf, w, h, 0.006 + 0.03 * p.softness);
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = 0.35 + 0.55 * amount;
+  ctx.drawImage(soft, 0, 0, w, h);
+  ctx.restore();
+  // the prism itself
+  const s = m * 0.09;
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.rotate(base + Math.PI / 2);
+  ctx.beginPath();
+  ctx.moveTo(0, -s);
+  ctx.lineTo(s * 0.87, s * 0.5);
+  ctx.lineTo(-s * 0.87, s * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = Math.max(1, m * 0.003);
+  ctx.stroke();
+  ctx.restore();
+}
+/* Glass as a finishing effect (Gradient/Mesh studios and the wallpaper
+   Effects card): type + strength, with sensible fixed knobs. */
+function wpApplyGlass(ctx, w, h, type, amount, T, seed) {
+  if (!type || type === 'none' || !(amount > 0)) return;
+  const rnd = wpHashFn(seed || 'glass');
+  const p = { density: 0.45, size: 0.5, softness: 0.55, depth: 0.5, angle: 0.08, thickness: 0.5 };
+  if (type === 'frosted') wpGlassPanes(ctx, w, h, T || 0, p, rnd, amount);
+  else if (type === 'fluted') wpFlutedGlass(ctx, w, h, p, amount);
+  else if (type === 'liquid') wpLiquidDrops(ctx, w, h, T || 0, p, rnd, amount);
+  else if (type === 'prism') wpPrismBeams(ctx, w, h, T || 0, p, amount);
+}
+
+/* Post-processing on a finished frame. Order: glass (reshapes the image),
+   glow (adds light), duotone (remaps tones), then the surface layers —
+   vignette and grain last so they sit on top as texture. */
+function wpApplyEffects(ctx, w, h, effects, t) {
+  if (!effects) return;
+  wpApplyGlass(ctx, w, h, effects.glass, effects.glassAmount ?? 0.7, t, 'fx');
+  wpGlow(ctx, w, h, effects.glow || 0);
+  const duotone = effects.duotone;
   if (duotone && duotone.shadow && duotone.highlight) {
     ctx.save();
-    ctx.filter = 'grayscale(1)';
-    ctx.globalCompositeOperation = 'copy';
-    ctx.drawImage(ctx.canvas, 0, 0, w, h);
-    ctx.filter = 'none';
+    ctx.globalCompositeOperation = 'saturation';
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'color';
     const grad = ctx.createLinearGradient(0, 0, w, h);
     grad.addColorStop(0, duotone.shadow);
@@ -2966,73 +3249,18 @@ function wpApplyEffects(ctx, w, h, effects) {
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
   }
-  if (vignette > 0) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    const r = Math.max(w, h) * 0.75;
-    const grad = ctx.createRadialGradient(w / 2, h / 2, r * (1 - vignette * 0.55), w / 2, h / 2, r);
-    grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(1, `rgba(0,0,0,${Math.min(0.85, vignette)})`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-    ctx.restore();
-  }
-  if (grain > 0) {
-    const pattern = ctx.createPattern(wpMakeNoiseCanvas(128), 'repeat');
-    ctx.save();
-    ctx.globalCompositeOperation = 'overlay';
-    ctx.globalAlpha = Math.min(0.5, grain);
-    ctx.fillStyle = pattern;
-    ctx.fillRect(0, 0, w, h);
-    ctx.restore();
-  }
+  wpVignette(ctx, w, h, effects.vignette || 0);
+  wpGrain(ctx, w, h, effects.grain || 0, t);
 }
 
-/* Self-contained hex<->HSL pair, deliberately duplicating hexToHsl/
-   hslToHex from the main color-utilities section rather than reusing
-   them — every wp*-prefixed function here is exactly the set that gets
-   serialized via .toString() into the standalone Live HTML export (see
-   exportWallpaperHtml()), so it can't depend on anything outside that
-   set without silently breaking in the exported file. */
-function wpHexToHsl(hex) {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
-  const num = parseInt(full, 16) || 0;
-  const r = ((num >> 16) & 255) / 255, g = ((num >> 8) & 255) / 255, b = (num & 255) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let hh = 0, s = 0;
-  const l = (max + min) / 2;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) hh = (g - b) / d + (g < b ? 6 : 0);
-    else if (max === g) hh = (b - r) / d + 2;
-    else hh = (r - g) / d + 4;
-    hh *= 60;
-  }
-  return { h: hh, s: s * 100, l: l * 100 };
-}
-function wpHslToHex(h, s, l) {
-  s /= 100; l /= 100;
-  const k = n => (n + h / 30) % 12;
-  const a = s * Math.min(l, 1 - l);
-  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-  const toHex = x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0');
-  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
-}
-/* A believable day-cycle warmth curve from local clock time alone (no
-   geolocation/real sunrise-sunset lookup — that's more precision than
-   a wallpaper tint needs): warm peaks near dawn and dusk, cool through
-   midday, mild through the evening, coolest in the dead of night. */
+function wpHexToHsl(hex) { return hexToHsl(hex); }
+function wpHslToHex(h, s, l) { return hslToHex(h, s, l); }
+/* A day-cycle warmth curve: warm near dawn and dusk, cool at midday,
+   coolest at night. Uses today's real sunrise/sunset once the location
+   has been shared (window.wpSunTimes), otherwise a fixed hour curve. */
 function wpGetTimeOfDayTemperature() {
   const now = new Date();
   const hour = now.getHours() + now.getMinutes() / 60;
-  /* Real sunrise/sunset (Advanced Mode): window.wpSunTimes is set once,
-     asynchronously, by a one-time geolocation fetch in the exported
-     HTML (see exportWallpaperHtml()) — this function itself stays pure
-     and synchronous, just reading that global if it's there. Same
-     warm-dawn / neutral-midday / warm-dusk / cool-night shape as the
-     fixed curve below, anchored to today's real times instead. */
   if (typeof window !== 'undefined' && window.wpSunTimes) {
     const { sunrise, sunset } = window.wpSunTimes;
     if (hour >= sunrise - 0.5 && hour < sunrise + 1) return 30 - ((hour - (sunrise - 0.5)) / 1.5) * 45;
@@ -3061,894 +3289,8 @@ function wpApplyTimeOfDayTint(colors) {
     return wpHslToHex(newHue, s, l);
   });
 }
-
-function wpDrawFrame(pattern, ctx, w, h, t, colors, speed, effects, timeOfDayTint) {
-  const renderColors = timeOfDayTint ? wpApplyTimeOfDayTint(colors) : colors;
-  ctx.save();
-  if (pattern === 'auroraFlow') wpDrawAuroraFlow(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'radialPulse') wpDrawRadialPulse(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'conicSpin') wpDrawConicSpin(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'waveBands') wpDrawWaveBands(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'starfield') wpDrawStarfield(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'plasma') wpDrawPlasma(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'ripple') wpDrawRipple(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'voronoi') wpDrawVoronoi(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'kaleidoscope') wpDrawKaleidoscope(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'perlinClouds') wpDrawPerlinClouds(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'lavaLamp') wpDrawLavaLamp(ctx, w, h, t, renderColors, speed);
-  else if (pattern === 'moire') wpDrawMoire(ctx, w, h, t, renderColors, speed);
-  else wpDrawFlowingMesh(ctx, w, h, t, renderColors, speed);
-  wpApplyEffects(ctx, w, h, effects);
-  ctx.restore();
-}
-
-/* True-black/AMOLED export: crushes near-black shadow pixels to pure
-   #000 so an OLED screen can actually turn those pixels off, rather
-   than lighting them at some very-dark-but-nonzero value. Export-only
-   (PNG / Set as Wallpaper) — deliberately not part of wpDrawFrame or the
-   live/animated HTML export, since re-running a full getImageData pass
-   every frame at 60fps would be wasteful for something that only needs
-   to happen once, at the moment of export. */
-function wpApplyAmoledCrush(ctx, w, h, threshold) {
-  const imgData = ctx.getImageData(0, 0, w, h);
-  const d = imgData.data;
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i] <= threshold && d[i + 1] <= threshold && d[i + 2] <= threshold) {
-      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
-    }
-  }
-  ctx.putImageData(imgData, 0, 0);
-}
-
-/* Style packs: each bundles a pattern + colors + the effects stack
-   (grain/vignette/glow/duotone) into one click, instead of leaving
-   "look" and "look distinctive" as two separate steps. effects is
-   always the full { grain, vignette, glow, duotone } shape so a click
-   fully replaces wallpaperState.effects rather than merging into it. */
-const WALLPAPER_PRESETS = [
-  { name: 'Nebula Drift', pattern: 'flowingMesh', speed: 1.0, colors: ['#05030f', '#6d5dfc', '#ff6b9d', '#22d3c5'],
-    effects: { grain: 0.15, vignette: 0.2, glow: 0.25, duotone: null } },
-  { name: 'Northern Lights', pattern: 'auroraFlow', speed: 0.8, colors: ['#020814', '#00f2fe', '#43cea2', '#7b2ff7'],
-    effects: { grain: 0.1, vignette: 0.15, glow: 0.4, duotone: null } },
-  { name: 'Heartbeat', pattern: 'radialPulse', speed: 1.4, colors: ['#0a0505', '#ff512f', '#f5af19'],
-    effects: { grain: 0.2, vignette: 0.3, glow: 0.2, duotone: null } },
-  { name: 'Color Wheel', pattern: 'conicSpin', speed: 0.6, colors: ['#6d5dfc', '#ff6b9d', '#ffd43b', '#22d3c5'],
-    effects: { grain: 0, vignette: 0, glow: 0.3, duotone: null } },
-  { name: 'Ocean Waves', pattern: 'waveBands', speed: 0.7, colors: ['#04263c', '#0077b6', '#00b4d8', '#90e0ef'],
-    effects: { grain: 0.1, vignette: 0.2, glow: 0.15, duotone: null } },
-  { name: 'Molten Core', pattern: 'radialPulse', speed: 1.8, colors: ['#0a0505', '#f12711', '#f5af19'],
-    effects: { grain: 0.25, vignette: 0.35, glow: 0.35, duotone: null } },
-  { name: 'Candy Drift', pattern: 'flowingMesh', speed: 0.9, colors: ['#1a0f1e', '#ff9a9e', '#a18cd1', '#fbc2eb'],
-    effects: { grain: 0, vignette: 0, glow: 0.2, duotone: null } },
-  { name: 'Citrus Spin', pattern: 'conicSpin', speed: 0.5, colors: ['#fffdf5', '#f7971e', '#ffd200', '#a8ff78'],
-    effects: { grain: 0, vignette: 0, glow: 0.15, duotone: null } },
-  { name: 'Film Noir', pattern: 'radialPulse', speed: 1.0, colors: ['#050505', '#b23a48', '#4a4e69'],
-    effects: { grain: 0.45, vignette: 0.55, glow: 0.1, duotone: { shadow: '#0a0508', highlight: '#e8c4a0' } } },
-  { name: 'Cyber Dusk', pattern: 'conicSpin', speed: 0.7, colors: ['#08021a', '#ff2e88', '#00e5ff', '#7b2ff7'],
-    effects: { grain: 0.2, vignette: 0.3, glow: 0.5, duotone: null } },
-  { name: 'Sepia Drift', pattern: 'flowingMesh', speed: 0.8, colors: ['#1a1006', '#c9944a', '#8a5a2b', '#e8c98f'],
-    effects: { grain: 0.35, vignette: 0.4, glow: 0.15, duotone: { shadow: '#160f08', highlight: '#f0d9a8' } } },
-];
-
-let wallpaperState = {
-  pattern: 'flowingMesh',
-  speed: 1.0,
-  live: true,
-  colors: ['#0f1020', '#6d5dfc', '#ff6b9d', '#22d3c5'],
-  effects: { grain: 0, vignette: 0, glow: 0, duotone: null },
-  loopPerfect: false,
-  loopSeconds: 6,
-  seed: null,
-  timeOfDayTint: false,
-  parallax: false,
-  // Advanced Mode (Pro) — all opt-in, all only ever wired into the
-  // exported Live HTML File (see exportWallpaperHtml()), never the
-  // in-app preview, same reasoning as tilt parallax above: real touch
-  // and sensor events only reach that file once it's opened somewhere
-  // that forwards them.
-  tapRipple: false,
-  shakeRandomize: false,
-  doubleTapPause: false,
-  realSunTimes: false,
-  batteryAware: false,
-  depthParallax: false,
-};
-
-const ADVANCED_PATTERNS = ['starfield', 'plasma', 'ripple', 'voronoi', 'kaleidoscope', 'perlinClouds', 'lavaLamp', 'moire'];
-
-const wallpaperCanvas = document.getElementById('wallpaperCanvas');
-const wallpaperCtx = wallpaperCanvas.getContext('2d');
-const wallpaperPatternSelect = document.getElementById('wallpaperPatternSelect');
-const wallpaperSpeedSlider = document.getElementById('wallpaperSpeedSlider');
-const wallpaperSpeedValue = document.getElementById('wallpaperSpeedValue');
-const wallpaperColorsList = document.getElementById('wallpaperColorsList');
-const wallpaperPresetsGrid = document.getElementById('wallpaperPresetsGrid');
-const wallpaperModeSeg = document.getElementById('wallpaperModeSeg');
-const btnWallpaperNewFrame = document.getElementById('btnWallpaperNewFrame');
-const wallpaperResolutionSelect = document.getElementById('wallpaperResolutionSelect');
-
-/* Shows exactly what "My Screen" will actually export at, including the
-   raw screen.width/height/devicePixelRatio it read — added after a
-   report that downloads weren't matching an iPad's real screen. The
-   sizing math itself checked out in testing (byte-exact PNGs per named
-   preset), so the next step is seeing the live numbers a real device
-   reports rather than guessing at browser-specific screen-API quirks
-   this sandbox can't reproduce. Read-only: never triggers the Pro
-   gate/modal the way actually exporting does. */
-function updateWallpaperResolutionHint() {
-  const hint = document.getElementById('wallpaperResolutionHint');
-  if (!hint) return;
-  if (wallpaperResolutionSelect.value === 'auto') {
-    const size = getDeviceExportSize();
-    const { sw, sh } = getOrientedScreenSize();
-    hint.textContent = `→ ${size.w}×${size.h} (screen ${sw}×${sh}, pixel ratio ${window.devicePixelRatio || 1})`;
-  } else {
-    const [w, h] = wallpaperResolutionSelect.value.split('x');
-    hint.textContent = `→ ${w}×${h}`;
-  }
-}
-wallpaperResolutionSelect.addEventListener('change', updateWallpaperResolutionHint);
-window.addEventListener('resize', updateWallpaperResolutionHint);
-window.addEventListener('orientationchange', () => setTimeout(updateWallpaperResolutionHint, 200));
-
-const wallpaperAdvancedToggle = document.getElementById('wallpaperAdvancedToggle');
-const wallpaperAdvancedSection = document.getElementById('wallpaperAdvancedSection');
-
-/* Advanced Mode gates the 8 extra patterns and every interactive/adaptive
-   toggle behind Pro — same "visible, but reverts + opens the Pro modal
-   on an unlicensed attempt" convention as PRO_THEMES in the theme menu,
-   rather than hiding the whole feature set from people who don't know
-   it exists. isProUnlocked()/openProModal() are declared further down
-   the file but, as function declarations, are hoisted — safe to call
-   from here. */
-function isWallpaperAdvancedUnlocked() {
-  return isProUnlocked() && wallpaperAdvancedToggle.checked;
-}
-
-function syncWallpaperAdvancedUI() {
-  const on = wallpaperAdvancedToggle.checked;
-  wallpaperAdvancedSection.hidden = !on;
-  wallpaperPatternSelect.querySelectorAll('.pattern-advanced').forEach(opt => { opt.hidden = !on; });
-  if (!on && ADVANCED_PATTERNS.includes(wallpaperState.pattern)) {
-    wallpaperState.pattern = 'flowingMesh';
-    wallpaperPatternSelect.value = 'flowingMesh';
-    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-  }
-}
-
-function sanitizeWallpaperPattern(pattern) {
-  return (ADVANCED_PATTERNS.includes(pattern) && !isWallpaperAdvancedUnlocked()) ? 'flowingMesh' : pattern;
-}
-
-/* Syncs the 6 Advanced Mode feature toggles to wallpaperState — needed
-   anywhere wallpaperState is replaced wholesale (a share link, a saved
-   project, a recently-generated thumbnail), since those fields default
-   to undefined/false on any state object saved before Advanced Mode
-   existed. */
-function syncWallpaperAdvancedFeatureUI() {
-  document.getElementById('wallpaperTapRipple').checked = !!wallpaperState.tapRipple;
-  document.getElementById('wallpaperShakeRandomize').checked = !!wallpaperState.shakeRandomize;
-  document.getElementById('wallpaperDoubleTapPause').checked = !!wallpaperState.doubleTapPause;
-  document.getElementById('wallpaperRealSunTimes').checked = !!wallpaperState.realSunTimes;
-  document.getElementById('wallpaperBatteryAware').checked = !!wallpaperState.batteryAware;
-  document.getElementById('wallpaperDepthParallax').checked = !!wallpaperState.depthParallax;
-}
-
-wallpaperAdvancedToggle.addEventListener('change', () => {
-  if (wallpaperAdvancedToggle.checked && !isProUnlocked()) {
-    wallpaperAdvancedToggle.checked = false;
-    showToast('Advanced Mode is a Pro feature — unlock for ₹39');
-    openProModal();
-    return;
-  }
-  try { localStorage.setItem('gradii_wallpaper_advanced', wallpaperAdvancedToggle.checked ? '1' : '0'); } catch (e) { /* ignore */ }
-  syncWallpaperAdvancedUI();
-});
-
-let wallpaperAnimId = null;
-let wallpaperAnimStart = null;
-let wallpaperFrozenT = 0;
-
-function resizeWallpaperCanvas() {
-  const rect = wallpaperCanvas.getBoundingClientRect();
-  if (rect.width < 1 || rect.height < 1) return;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  wallpaperCanvas.width = Math.max(1, Math.round(rect.width * dpr));
-  wallpaperCanvas.height = Math.max(1, Math.round(rect.height * dpr));
-}
-
-function drawWallpaperFrame(t) {
-  /* Wrapping t modulo the loop length, rather than trying to align each
-     pattern's several different internal sin/cos frequencies, guarantees
-     an exact loop for free: since every pattern is a pure function of t,
-     if t itself repeats exactly every loopSeconds, the rendered frame at
-     t=0 is bit-for-bit the same as at t=loopSeconds — true regardless of
-     how many independent frequencies a pattern mixes internally. */
-  const useT = wallpaperState.loopPerfect ? (t % wallpaperState.loopSeconds) : t;
-  wpDrawFrame(wallpaperState.pattern, wallpaperCtx, wallpaperCanvas.width, wallpaperCanvas.height, useT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
-}
-
-function wallpaperTick(ts) {
-  if (wallpaperAnimStart === null) wallpaperAnimStart = ts - wallpaperFrozenT * 1000;
-  wallpaperFrozenT = (ts - wallpaperAnimStart) / 1000;
-  drawWallpaperFrame(wallpaperFrozenT);
-  wallpaperAnimId = requestAnimationFrame(wallpaperTick);
-}
-
-function startWallpaperAnimation() {
-  if (wallpaperAnimId !== null) return;
-  wallpaperAnimStart = null;
-  wallpaperAnimId = requestAnimationFrame(wallpaperTick);
-}
-
-function stopWallpaperAnimation() {
-  if (wallpaperAnimId !== null) {
-    cancelAnimationFrame(wallpaperAnimId);
-    wallpaperAnimId = null;
-  }
-}
-
-function activateWallpaperTab() {
-  resizeWallpaperCanvas();
-  updateWallpaperResolutionHint();
-  if (wallpaperState.live) startWallpaperAnimation();
-  else drawWallpaperFrame(wallpaperFrozenT);
-}
-
-function renderWallpaperColorsList() {
-  wallpaperColorsList.innerHTML = '';
-  wallpaperState.colors.forEach((color, i) => {
-    const chip = document.createElement('div');
-    chip.className = 'wallpaper-color-chip';
-    chip.innerHTML = `
-      <input type="color" value="${color}" aria-label="Wallpaper color ${i + 1}">
-      <button class="wallpaper-color-remove" title="Remove color" ${wallpaperState.colors.length <= 2 ? 'disabled' : ''}>✕</button>
-    `;
-    chip.querySelector('input').addEventListener('input', (e) => {
-      wallpaperState.colors[i] = e.target.value;
-      if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-    });
-    chip.querySelector('.wallpaper-color-remove').addEventListener('click', () => {
-      if (wallpaperState.colors.length <= 2) return;
-      wallpaperState.colors.splice(i, 1);
-      renderWallpaperColorsList();
-      if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-    });
-    wallpaperColorsList.appendChild(chip);
-  });
-}
-
-function renderWallpaperPresets() {
-  wallpaperPresetsGrid.innerHTML = '';
-  WALLPAPER_PRESETS.forEach(preset => {
-    const canvas = document.createElement('canvas');
-    canvas.className = 'preset-swatch';
-    canvas.width = 96;
-    canvas.height = 96;
-    canvas.title = preset.name;
-    const ctx = canvas.getContext('2d');
-    wpDrawFrame(preset.pattern, ctx, 96, 96, 0.6, preset.colors, preset.speed, preset.effects);
-    canvas.addEventListener('click', () => { applyWallpaperPreset(preset); showToast(`Loaded "${preset.name}"`); });
-    wallpaperPresetsGrid.appendChild(canvas);
-  });
-  staggerIn(wallpaperPresetsGrid);
-}
-
-function applyWallpaperPreset(preset) {
-  wallpaperState.pattern = preset.pattern;
-  wallpaperState.colors = [...preset.colors];
-  wallpaperState.speed = preset.speed;
-  wallpaperState.effects = preset.effects
-    ? { grain: preset.effects.grain || 0, vignette: preset.effects.vignette || 0, glow: preset.effects.glow || 0, duotone: preset.effects.duotone ? { ...preset.effects.duotone } : null }
-    : { grain: 0, vignette: 0, glow: 0, duotone: null };
-  wallpaperPatternSelect.value = preset.pattern;
-  wallpaperSpeedSlider.value = Math.round(preset.speed * 10);
-  wallpaperSpeedValue.textContent = `${preset.speed.toFixed(1)}×`;
-  renderWallpaperColorsList();
-  syncWallpaperEffectsUI();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-}
-
-/* Deterministic PRNG (mulberry32) so a wallpaper's "random" colors can be
-   reproduced exactly from a short seed string, instead of Math.random()
-   being gone the moment you move on. seedToInt hashes the string down to
-   the 32-bit int mulberry32 wants. */
-function seedToInt(seedStr) {
-  let h = 0;
-  for (let i = 0; i < seedStr.length; i++) h = (Math.imul(31, h) + seedStr.charCodeAt(i)) | 0;
-  return h;
-}
-function mulberry32(seed) {
-  let s = seed | 0;
-  return function () {
-    s = (s + 0x6d2b79f5) | 0;
-    let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function syncWallpaperSeedUI() {
-  const input = document.getElementById('wallpaperSeedInput');
-  if (document.activeElement !== input) input.value = wallpaperState.seed || '';
-}
-
-function randomizeWallpaperColors(customSeed) {
-  /* Guards against this ever being wired up as a bare event listener
-     (addEventListener passes the event as the first arg) silently
-     "seeding" every click with the same non-string value — which would
-     make every randomize produce identical colors, exactly the kind of
-     bug this feature exists to let someone deliberately opt into, not
-     trigger by accident. */
-  wallpaperState.seed = (typeof customSeed === 'string' && customSeed) || Math.random().toString(36).slice(2, 8);
-  const rng = mulberry32(seedToInt(wallpaperState.seed));
-  const n = wallpaperState.colors.length;
-  const baseHue = rng() * 360;
-  wallpaperState.colors = Array.from({ length: n }, (_, i) => {
-    if (i === 0) return hslToHex(baseHue, 30 + rng() * 20, 8 + rng() * 10);
-    const h = baseHue + (rng() - 0.5) * 150;
-    return hslToHex(h, 55 + rng() * 35, 45 + rng() * 25);
-  });
-  applyBrandKitToWallpaper();
-  renderWallpaperColorsList();
-  syncWallpaperSeedUI();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
-  if (!suppressRecentGenerated) pushRecentGenerated('wallpaper', `linear-gradient(135deg, ${wallpaperState.colors.join(', ')})`, wallpaperState);
-}
-let suppressRecentGenerated = false;
-
-wallpaperPatternSelect.addEventListener('change', () => {
-  wallpaperState.pattern = wallpaperPatternSelect.value;
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-});
-
-wallpaperSpeedSlider.addEventListener('input', () => {
-  wallpaperState.speed = Number(wallpaperSpeedSlider.value) / 10;
-  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-});
-
-const wallpaperGrainSlider = document.getElementById('wallpaperGrainSlider');
-const wallpaperGrainValue = document.getElementById('wallpaperGrainValue');
-const wallpaperVignetteSlider = document.getElementById('wallpaperVignetteSlider');
-const wallpaperVignetteValue = document.getElementById('wallpaperVignetteValue');
-const wallpaperGlowSlider = document.getElementById('wallpaperGlowSlider');
-const wallpaperGlowValue = document.getElementById('wallpaperGlowValue');
-const wallpaperDuotoneToggle = document.getElementById('wallpaperDuotoneToggle');
-const wallpaperDuotoneColors = document.getElementById('wallpaperDuotoneColors');
-const wallpaperDuotoneShadow = document.getElementById('wallpaperDuotoneShadow');
-const wallpaperDuotoneHighlight = document.getElementById('wallpaperDuotoneHighlight');
-
-wallpaperGrainSlider.addEventListener('input', () => {
-  wallpaperState.effects.grain = Number(wallpaperGrainSlider.value) / 100;
-  wallpaperGrainValue.textContent = `${wallpaperGrainSlider.value}%`;
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-});
-
-wallpaperVignetteSlider.addEventListener('input', () => {
-  wallpaperState.effects.vignette = Number(wallpaperVignetteSlider.value) / 100;
-  wallpaperVignetteValue.textContent = `${wallpaperVignetteSlider.value}%`;
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-});
-
-wallpaperGlowSlider.addEventListener('input', () => {
-  wallpaperState.effects.glow = Number(wallpaperGlowSlider.value) / 100;
-  wallpaperGlowValue.textContent = `${wallpaperGlowSlider.value}%`;
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-});
-
-function updateWallpaperDuotone() {
-  wallpaperState.effects.duotone = wallpaperDuotoneToggle.checked
-    ? { shadow: wallpaperDuotoneShadow.value, highlight: wallpaperDuotoneHighlight.value }
-    : null;
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-}
-wallpaperDuotoneToggle.addEventListener('change', () => {
-  wallpaperDuotoneColors.hidden = !wallpaperDuotoneToggle.checked;
-  updateWallpaperDuotone();
-});
-wallpaperDuotoneShadow.addEventListener('input', updateWallpaperDuotone);
-wallpaperDuotoneHighlight.addEventListener('input', updateWallpaperDuotone);
-
-/* Pushes wallpaperState.effects into the slider/toggle UI — needed after
-   a style-pack click, since that changes wallpaperState.effects directly
-   rather than through these controls, and the controls would otherwise
-   silently go stale. */
-function syncWallpaperEffectsUI() {
-  const fx = wallpaperState.effects;
-  wallpaperGrainSlider.value = Math.round(fx.grain * 100);
-  wallpaperGrainValue.textContent = `${Math.round(fx.grain * 100)}%`;
-  wallpaperVignetteSlider.value = Math.round(fx.vignette * 100);
-  wallpaperVignetteValue.textContent = `${Math.round(fx.vignette * 100)}%`;
-  wallpaperGlowSlider.value = Math.round(fx.glow * 100);
-  wallpaperGlowValue.textContent = `${Math.round(fx.glow * 100)}%`;
-  wallpaperDuotoneToggle.checked = !!fx.duotone;
-  wallpaperDuotoneColors.hidden = !fx.duotone;
-  if (fx.duotone) {
-    wallpaperDuotoneShadow.value = fx.duotone.shadow;
-    wallpaperDuotoneHighlight.value = fx.duotone.highlight;
-  }
-}
-
-document.getElementById('wallpaperSafeZoneToggle').addEventListener('change', (e) => {
-  document.getElementById('wallpaperSafeZoneOverlay').hidden = !e.target.checked;
-});
-
-const wallpaperSeedInput = document.getElementById('wallpaperSeedInput');
-wallpaperSeedInput.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter') return;
-  e.preventDefault();
-  randomizeWallpaperColors(wallpaperSeedInput.value.trim() || undefined);
-});
-document.getElementById('btnCopySeed').addEventListener('click', () => {
-  if (!wallpaperState.seed) { showToast('Randomize once first to get a seed'); return; }
-  copyText(wallpaperState.seed, 'Seed copied');
-});
-
-const wallpaperLoopPerfectToggle = document.getElementById('wallpaperLoopPerfectToggle');
-const wallpaperLoopLengthRow = document.getElementById('wallpaperLoopLengthRow');
-const wallpaperLoopLengthSlider = document.getElementById('wallpaperLoopLengthSlider');
-const wallpaperLoopLengthValue = document.getElementById('wallpaperLoopLengthValue');
-wallpaperLoopPerfectToggle.addEventListener('change', (e) => {
-  wallpaperState.loopPerfect = e.target.checked;
-  wallpaperLoopLengthRow.hidden = !e.target.checked;
-  wallpaperLoopLengthSlider.hidden = !e.target.checked;
-});
-wallpaperLoopLengthSlider.addEventListener('input', () => {
-  wallpaperState.loopSeconds = Number(wallpaperLoopLengthSlider.value);
-  wallpaperLoopLengthValue.textContent = `${wallpaperState.loopSeconds}s`;
-});
-
-document.getElementById('wallpaperTimeOfDayToggle').addEventListener('change', (e) => {
-  wallpaperState.timeOfDayTint = e.target.checked;
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-});
-document.getElementById('wallpaperParallaxToggle').addEventListener('change', (e) => {
-  wallpaperState.parallax = e.target.checked;
-});
-
-document.getElementById('wallpaperTapRipple').addEventListener('change', (e) => { wallpaperState.tapRipple = e.target.checked; });
-document.getElementById('wallpaperShakeRandomize').addEventListener('change', (e) => { wallpaperState.shakeRandomize = e.target.checked; });
-document.getElementById('wallpaperDoubleTapPause').addEventListener('change', (e) => { wallpaperState.doubleTapPause = e.target.checked; });
-document.getElementById('wallpaperRealSunTimes').addEventListener('change', (e) => { wallpaperState.realSunTimes = e.target.checked; });
-document.getElementById('wallpaperBatteryAware').addEventListener('change', (e) => { wallpaperState.batteryAware = e.target.checked; });
-document.getElementById('wallpaperDepthParallax').addEventListener('change', (e) => { wallpaperState.depthParallax = e.target.checked; });
-
-document.getElementById('wallpaperSeasonalRotation').addEventListener('change', (e) => {
-  try { localStorage.setItem('gradii_wallpaper_seasonal', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
-  if (e.target.checked) applySeasonalWallpaperStyle();
-});
-document.getElementById('wallpaperOfTheDay').addEventListener('change', (e) => {
-  try { localStorage.setItem('gradii_wallpaper_of_the_day', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
-  if (e.target.checked) applyWallpaperOfTheDay();
-});
-
-/* Seasonal auto-style: deterministic month -> WALLPAPER_PRESETS index,
-   applied once when the app opens if the toggle is on (same "on open,
-   not truly in the background" scoping as Chapters, and skipped
-   entirely when Chapters' own auto-apply already ran — two features
-   fighting to set the same state on load would just mean whichever
-   runs last silently wins, so Chapters, being the more specific choice
-   someone deliberately set up per-chapter, takes priority). */
-function applySeasonalWallpaperStyle() {
-  const month = new Date().getMonth(); // 0-11
-  const season = month <= 1 || month === 11 ? 0 : month <= 4 ? 1 : month <= 7 ? 2 : 3; // winter/spring/summer/autumn
-  const seasonPresetNames = ['Sepia Drift', 'Citrus Spin', 'Ocean Waves', 'Molten Core'];
-  const preset = WALLPAPER_PRESETS.find(p => p.name === seasonPresetNames[season]) || WALLPAPER_PRESETS[0];
-  applyWallpaperPreset(preset);
-}
-
-/* Deterministic per-calendar-day pick — a day-of-year hash into
-   WALLPAPER_PRESETS, so it's the same pick all day on this device and a
-   different one tomorrow, with no server or stored "today's pick" needed. */
-function applyWallpaperOfTheDay() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 0);
-  const dayOfYear = Math.floor((now - start) / 86400000);
-  const preset = WALLPAPER_PRESETS[dayOfYear % WALLPAPER_PRESETS.length];
-  applyWallpaperPreset(preset);
-}
-
-/* Wallpaper "Chapters": named looks tied to a time-of-day window,
-   applied when the app is opened/foregrounded (or on demand via Check
-   Now) — not a true background rotation. Real background switching
-   while the app is closed needs a native scheduled service (e.g.
-   Android WorkManager driving the existing WallpaperSetter plugin),
-   which is a real native-Android build+device-verification undertaking
-   on its own; this in-app version ships what's honestly verifiable
-   without a physical device to test background service reliability on. */
-function loadWallpaperChapters() {
-  try { return JSON.parse(localStorage.getItem('gradii_wallpaper_chapters') || '[]'); } catch (e) { return []; }
-}
-function saveWallpaperChaptersList(list) {
-  try { localStorage.setItem('gradii_wallpaper_chapters', JSON.stringify(list)); } catch (e) { /* ignore */ }
-}
-function findActiveChapter(chapters) {
-  if (!chapters.length) return null;
-  const hour = new Date().getHours();
-  const sorted = [...chapters].sort((a, b) => a.startHour - b.startHour);
-  let active = sorted[sorted.length - 1];
-  for (const ch of sorted) {
-    if (hour >= ch.startHour) active = ch;
-  }
-  return active;
-}
-function applyWallpaperChapter(chapter) {
-  wallpaperState.pattern = sanitizeWallpaperPattern(chapter.pattern);
-  wallpaperState.colors = [...chapter.colors];
-  wallpaperState.speed = chapter.speed;
-  wallpaperState.effects = JSON.parse(JSON.stringify(chapter.effects));
-  wallpaperPatternSelect.value = wallpaperState.pattern;
-  wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
-  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
-  renderWallpaperColorsList();
-  syncWallpaperEffectsUI();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-}
-function renderWallpaperChaptersList() {
-  const list = loadWallpaperChapters();
-  const container = document.getElementById('wallpaperChaptersList');
-  container.innerHTML = '';
-  list.sort((a, b) => a.startHour - b.startHour).forEach((ch, i) => {
-    const el = document.createElement('div');
-    el.className = 'chapter-item';
-    el.innerHTML = `
-      <span class="chapter-item-swatch" style="background: linear-gradient(135deg, ${ch.colors.join(', ')})"></span>
-      <div class="chapter-item-info">
-        <div class="chapter-item-name">${ch.name}</div>
-        <div class="chapter-item-time">from ${String(ch.startHour).padStart(2, '0')}:00</div>
-      </div>
-      <button class="chapter-item-remove" title="Delete">✕</button>
-    `;
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.chapter-item-remove')) return;
-      applyWallpaperChapter(ch);
-      showToast(`Applied "${ch.name}"`);
-    });
-    el.querySelector('.chapter-item-remove').addEventListener('click', () => {
-      const l = loadWallpaperChapters().filter(c => c.name !== ch.name || c.startHour !== ch.startHour);
-      saveWallpaperChaptersList(l);
-      renderWallpaperChaptersList();
-    });
-    container.appendChild(el);
-  });
-}
-document.getElementById('btnAddChapter').addEventListener('click', () => {
-  const name = document.getElementById('chapterNameInput').value.trim();
-  const hour = Number(document.getElementById('chapterHourInput').value);
-  if (!name) { showToast('Give this chapter a name first'); return; }
-  if (!(hour >= 0 && hour <= 23)) { showToast('Start hour must be 0-23'); return; }
-  const list = loadWallpaperChapters();
-  list.push({
-    name, startHour: hour,
-    pattern: wallpaperState.pattern,
-    colors: [...wallpaperState.colors],
-    speed: wallpaperState.speed,
-    effects: JSON.parse(JSON.stringify(wallpaperState.effects)),
-  });
-  saveWallpaperChaptersList(list);
-  renderWallpaperChaptersList();
-  document.getElementById('chapterNameInput').value = '';
-  document.getElementById('chapterHourInput').value = '';
-  showToast(`Chapter "${name}" saved from the current wallpaper`);
-});
-document.getElementById('btnCheckChapterNow').addEventListener('click', () => {
-  const active = findActiveChapter(loadWallpaperChapters());
-  if (!active) { showToast('No chapters saved yet'); return; }
-  applyWallpaperChapter(active);
-  showToast(`It's ${new Date().getHours()}:00 — applied "${active.name}"`);
-});
-const wallpaperChaptersAutoToggle = document.getElementById('wallpaperChaptersAutoToggle');
-wallpaperChaptersAutoToggle.addEventListener('change', (e) => {
-  try { localStorage.setItem('gradii_wallpaper_chapters_auto', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
-});
-
-document.getElementById('btnExportWallpaperRecipe').addEventListener('click', () => {
-  const recipe = {
-    kind: 'gradii-wallpaper-recipe',
-    pattern: wallpaperState.pattern,
-    colors: wallpaperState.colors,
-    speed: wallpaperState.speed,
-    effects: wallpaperState.effects,
-  };
-  downloadBlob(JSON.stringify(recipe, null, 2), 'wallpaper-recipe.json', 'application/json');
-  showToast('Recipe saved');
-});
-
-const wallpaperRecipeFileInput = document.getElementById('wallpaperRecipeFileInput');
-document.getElementById('btnImportWallpaperRecipe').addEventListener('click', () => wallpaperRecipeFileInput.click());
-wallpaperRecipeFileInput.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  try {
-    const recipe = JSON.parse(await file.text());
-    if (!recipe.pattern || !Array.isArray(recipe.colors)) throw new Error('Not a wallpaper recipe file');
-    wallpaperState.pattern = sanitizeWallpaperPattern(recipe.pattern);
-    wallpaperState.colors = recipe.colors;
-    wallpaperState.speed = recipe.speed || 1;
-    wallpaperState.effects = recipe.effects || { grain: 0, vignette: 0, glow: 0, duotone: null };
-    wallpaperPatternSelect.value = wallpaperState.pattern;
-    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
-    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
-    renderWallpaperColorsList();
-    syncWallpaperEffectsUI();
-    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-    showToast('Recipe loaded');
-  } catch (err) {
-    showToast('Could not read that recipe file');
-  }
-  wallpaperRecipeFileInput.value = '';
-});
-
-/* Reuses the same k-means-ish color-clustering approach as the Image
-   Extractor, just fed the wallpaper canvas's own pixels instead of an
-   uploaded photo — lets a wallpaper you like double as a starting
-   palette instead of picking the colors twice. */
-document.getElementById('btnExtractPaletteFromWallpaper').addEventListener('click', () => {
-  const colors = extractColorsFromCanvas(wallpaperCanvas, paletteState.count || 5);
-  if (!colors.length) { showToast('Could not read colors from the wallpaper'); return; }
-  paletteState.colors = colors;
-  paletteState.locked = colors.map(() => false);
-  paletteState.count = colors.length;
-  paletteCountSlider.value = paletteState.count;
-  paletteCountValue.textContent = paletteState.count;
-  renderPaletteSwatches();
-  pushPaletteHistory();
-  setActiveTab('palette');
-  showToast('Palette extracted from this wallpaper');
-});
-
-/* Re-rolls only the effects stack, keeping the pattern and colors —
-   for when the look you built is right but you want a different
-   texture/mood on top of it, without losing the colors to a full
-   Randomize Colors. */
-document.getElementById('btnRemixWallpaper').addEventListener('click', () => {
-  const hue = Math.random() * 360;
-  wallpaperState.effects = {
-    grain: Math.random() * 0.4,
-    vignette: Math.random() * 0.5,
-    glow: Math.random() * 0.5,
-    duotone: Math.random() < 0.35
-      ? {
-          shadow: hslToHex(hue, 40 + Math.random() * 20, 8 + Math.random() * 8),
-          highlight: hslToHex(hue + (Math.random() - 0.5) * 40, 30 + Math.random() * 30, 78 + Math.random() * 15),
-        }
-      : null,
-  };
-  syncWallpaperEffectsUI();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
-  showToast('Effects remixed');
-});
-
-/* Generates several randomized variations at the current resolution and
-   zips them for offline browsing, instead of clicking Randomize + PNG
-   download one at a time. Restores the wallpaper you started with
-   afterward — this is meant to produce options, not leave you on
-   whichever variation happened to render last. */
-document.getElementById('btnBatchExportWallpaper').addEventListener('click', async () => {
-  if (!isProUnlocked()) { showToast('Batch export is a Pro feature — unlock for ₹39'); openProModal(); return; }
-  if (typeof JSZip === 'undefined') { showToast('Zip library failed to load — try again online'); return; }
-  const size = resolveExportSize(wallpaperResolutionSelect);
-  if (!size) return;
-  const { w, h } = size;
-  const count = clamp(Number(document.getElementById('wallpaperBatchCount').value) || 6, 2, 12);
-  showToast(`Generating ${count} variations…`);
-
-  const originalColors = [...wallpaperState.colors];
-  const originalSeed = wallpaperState.seed;
-  const zip = new JSZip();
-  const canvas = document.getElementById('exportCanvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  suppressRecentGenerated = true;
-  for (let i = 0; i < count; i++) {
-    randomizeWallpaperColors();
-    wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
-    if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
-    drawWatermark(ctx, w, h);
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-    zip.file(`wallpaper-${wallpaperState.seed}.png`, blob);
-  }
-  suppressRecentGenerated = false;
-
-  wallpaperState.colors = originalColors;
-  wallpaperState.seed = originalSeed;
-  renderWallpaperColorsList();
-  syncWallpaperSeedUI();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-
-  const zipBlob = await zip.generateAsync({ type: 'blob' });
-  saveFile(zipBlob, 'gradii-wallpapers.zip', 'application/zip');
-  showToast(`${count} wallpapers zipped and downloaded`);
-});
-
-/* A single wide image spanning N monitors side by side, rather than N
-   separate files — this is the format desktop OSes actually expect for
-   a "span across displays" wallpaper. The pattern renders continuously
-   across the full width since every wp* pattern positions its blobs/
-   bands as fractions of the canvas's own w/h, so a wider canvas alone
-   is enough to make the scene flow across the monitor seams instead of
-   visibly repeating per-monitor. */
-document.getElementById('btnMultiMonitorExport').addEventListener('click', () => {
-  if (!isProUnlocked()) { showToast('Multi-monitor export is a Pro feature — unlock for ₹39'); openProModal(); return; }
-  const monitors = Number(document.getElementById('wallpaperMonitorCount').value) || 2;
-  const w = 1920 * monitors, h = 1080;
-  const canvas = document.getElementById('exportCanvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
-  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
-  drawWatermark(ctx, w, h);
-  downloadCanvasPng(canvas, `wallpaper-${monitors}monitor-${w}x${h}.png`);
-  showToast(`${monitors}-monitor wallpaper downloaded — set your OS wallpaper display mode to "Span"`);
-});
-
-wallpaperModeSeg.addEventListener('click', (e) => {
-  const btn = e.target.closest('.seg-btn');
-  if (!btn) return;
-  const live = btn.dataset.mode === 'live';
-  wallpaperState.live = live;
-  wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === btn.dataset.mode));
-  btnWallpaperNewFrame.hidden = live;
-  if (live) startWallpaperAnimation();
-  else stopWallpaperAnimation();
-});
-
-btnWallpaperNewFrame.addEventListener('click', () => {
-  wallpaperFrozenT = Math.random() * 60;
-  drawWallpaperFrame(wallpaperFrozenT);
-});
-
-document.getElementById('btnAddWallpaperColor').addEventListener('click', () => {
-  if (wallpaperState.colors.length >= 6) { showToast('Maximum 6 colors'); return; }
-  wallpaperState.colors.push(randomHex());
-  renderWallpaperColorsList();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-});
-
-document.getElementById('btnRandomWallpaperColors').addEventListener('click', () => randomizeWallpaperColors());
-
-document.getElementById('btnShareWallpaper').addEventListener('click', () => {
-  copyShareLink('wallpaper', wallpaperState);
-});
-
-document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () => {
-  const size = resolveExportSize(wallpaperResolutionSelect);
-  if (!size) return;
-  const { w, h } = size;
-  const canvas = document.getElementById('exportCanvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
-  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
-  drawWatermark(ctx, w, h);
-  downloadCanvasPng(canvas, `wallpaper-${w}x${h}.png`);
-  showToast('Wallpaper PNG downloaded');
-});
-
-document.getElementById('btnCopyWallpaperImage').addEventListener('click', () => {
-  const size = resolveExportSize(wallpaperResolutionSelect);
-  if (!size) return;
-  const { w, h } = size;
-  const canvas = document.getElementById('exportCanvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
-  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
-  drawWatermark(ctx, w, h);
-  copyCanvasToClipboard(canvas);
-});
-
-/* Opens Android's own "crop and set wallpaper" system UI directly, instead
-   of leaving the user to save the PNG and go find it in a gallery app
-   afterward. Native-app-only: the underlying WallpaperManager intent has
-   no web equivalent, so the button stays hidden outside the APK. */
-const btnSetAsWallpaper = document.getElementById('btnSetAsWallpaper');
-if (isNativeApp() && window.Capacitor.Plugins.WallpaperSetter) {
-  btnSetAsWallpaper.hidden = false;
-}
-btnSetAsWallpaper.addEventListener('click', async () => {
-  const { w, h } = getDeviceExportSize();
-  const canvas = document.getElementById('exportCanvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
-  if (document.getElementById('wallpaperAmoledToggle').checked) wpApplyAmoledCrush(ctx, w, h, 28);
-  drawWatermark(ctx, w, h);
-  canvas.toBlob(async (blob) => {
-    try {
-      const base64 = await blobToBase64(blob);
-      const Filesystem = window.Capacitor.Plugins.Filesystem;
-      const written = await Filesystem.writeFile({
-        path: `wallpaper-${Date.now()}.png`,
-        data: base64,
-        directory: 'CACHE',
-        recursive: true,
-      });
-      await window.Capacitor.Plugins.WallpaperSetter.setWallpaper({ uri: written.uri });
-    } catch (e) {
-      showToast('Could not open wallpaper chooser: ' + (e && e.message ? e.message : 'unknown error'));
-    }
-  }, 'image/png');
-});
-
-document.getElementById('btnRecordWallpaper').addEventListener('click', () => {
-  if (typeof MediaRecorder === 'undefined' || typeof wallpaperCanvas.captureStream !== 'function') {
-    showToast('Video recording not supported in this browser');
-    return;
-  }
-  const wasLive = wallpaperState.live;
-  if (!wasLive) startWallpaperAnimation();
-
-  const stream = wallpaperCanvas.captureStream(30);
-  const mimeCandidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  const mime = mimeCandidates.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m));
-
-  let recorder;
-  try {
-    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-  } catch (e) {
-    showToast('Video recording not supported in this browser');
-    if (!wasLive) stopWallpaperAnimation();
-    return;
-  }
-
-  const chunks = [];
-  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-  recorder.onstop = () => {
-    const blob = new Blob(chunks, { type: mime || 'video/webm' });
-    saveFile(blob, 'wallpaper.webm', mime || 'video/webm');
-    if (!wasLive) stopWallpaperAnimation();
-    showToast('Video downloaded');
-  };
-
-  const durationMs = wallpaperState.loopPerfect ? Math.round(wallpaperState.loopSeconds * 1000) : 6000;
-  recorder.start();
-  showToast(wallpaperState.loopPerfect ? `Recording a perfect ${wallpaperState.loopSeconds}s loop…` : 'Recording 6s loop…');
-  setTimeout(() => recorder.stop(), durationMs);
-});
-
-/* Opt-in mic input, present only when the "Audio-reactive" toggle was on at
-   export time. Amplitude from a Web Audio AnalyserNode scales the pattern's
-   effective animation speed each frame, so the wallpaper visibly pulses
-   with ambient sound/music. Falls back to the static speed value if mic
-   access is denied or unavailable — never blocks the wallpaper itself. */
-const AUDIO_REACTIVE_SNIPPET = `
-let audioLevel = 0;
-(function initAudioReactive() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-  navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    .then((stream) => {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      const ctxA = new AC();
-      const source = ctxA.createMediaStreamSource(stream);
-      const analyser = ctxA.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.75;
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      (function sample() {
-        analyser.getByteFrequencyData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) sum += data[i];
-        audioLevel = (sum / data.length) / 255;
-        requestAnimationFrame(sample);
-      })();
-    })
-    .catch(() => {});
-})();
-`;
-
-/* Simplified NOAA solar-calculator equations — accurate to within a few
-   minutes, self-contained (no network call), used only to upgrade the
-   time-of-day tint from a fixed hour curve to today's actual local
-   sunrise/sunset once geolocation is available. */
+/* Simplified NOAA solar-calculator equations — accurate to a few
+   minutes, no network call. Only used for the time-of-day tint. */
 function wpComputeSunTimes(lat, lon, date) {
   const rad = Math.PI / 180;
   const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
@@ -3969,285 +3311,1942 @@ function wpComputeSunTimes(lat, lon, date) {
   };
 }
 
-function exportWallpaperHtml() {
-  const functionsSrc = [
-    wpHexToRgba, wpDrawFlowingMesh, wpDrawAuroraFlow, wpDrawRadialPulse, wpDrawConicSpin, wpDrawWaveBands,
-    wpLerpColor, wpDrawStarfield, wpDrawPlasma, wpDrawRipple, wpDrawVoronoi, wpDrawKaleidoscope,
-    wpDrawPerlinClouds, wpDrawLavaLamp, wpDrawMoire,
-    wpMakeNoiseCanvas, wpApplyEffects, wpHexToHsl, wpHslToHex, wpGetTimeOfDayTemperature, wpApplyTimeOfDayTint,
-    wpDrawFrame, wpComputeSunTimes, mulberry32, seedToInt,
-  ]
-    .map(fn => fn.toString())
-    .join('\n\n');
-  const stateJson = JSON.stringify({
-    pattern: wallpaperState.pattern,
-    colors: wallpaperState.colors,
-    speed: wallpaperState.speed,
-    effects: wallpaperState.effects,
-    loopPerfect: wallpaperState.loopPerfect,
-    loopSeconds: wallpaperState.loopSeconds,
-    timeOfDayTint: wallpaperState.timeOfDayTint,
-    parallax: wallpaperState.parallax,
-    tapRipple: wallpaperState.tapRipple,
-    shakeRandomize: wallpaperState.shakeRandomize,
-    doubleTapPause: wallpaperState.doubleTapPause,
-    realSunTimes: wallpaperState.realSunTimes,
-    batteryAware: wallpaperState.batteryAware,
-    depthParallax: wallpaperState.depthParallax,
-  });
-  const audioReactive = document.getElementById('wallpaperAudioReactive').checked;
-  const html = `<!doctype html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Gradii Live Wallpaper</title>
-<style>
-  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
-  canvas { display: block; width: 100vw; height: 100vh; }
-</style>
-</head>
-<body>
-<canvas id="c"></canvas>
-<script>
-const wallpaperData = ${stateJson};
-
-${functionsSrc}
-${audioReactive ? AUDIO_REACTIVE_SNIPPET : 'let audioLevel = 0;'}
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(window.innerWidth * dpr);
-  canvas.height = Math.round(window.innerHeight * dpr);
-}
-resize();
-window.addEventListener('resize', resize);
-
-/* Real sunrise/sunset (Advanced Mode): a one-time geolocation fetch on
-   load, stored as a global the pure wpGetTimeOfDayTemperature() reads
-   if present — never re-requested per frame. Silently keeps the fixed-
-   hour curve if location is denied, times out, or the API is missing. */
-if (wallpaperData.realSunTimes && navigator.geolocation) {
-  navigator.geolocation.getCurrentPosition(function (pos) {
-    window.wpSunTimes = wpComputeSunTimes(pos.coords.latitude, pos.coords.longitude, new Date());
-  }, function () {}, { timeout: 8000 });
-}
-
-/* Battery-aware low-power mode (Advanced Mode): feature-detected — most
-   browsers have removed the Battery Status API over fingerprinting
-   concerns, so this silently never engages wherever it's unavailable,
-   same graceful-degradation convention as the Shape Detection API used
-   elsewhere in this app. Caps the frame rate and drops grain/glow
-   instead of stopping the wallpaper outright. */
-let wpLowPower = false;
-if (wallpaperData.batteryAware && navigator.getBattery) {
-  navigator.getBattery().then(function (battery) {
-    function update() { wpLowPower = battery.level < 0.2 && !battery.charging; }
-    update();
-    battery.addEventListener('levelchange', update);
-    battery.addEventListener('chargingchange', update);
-  }).catch(function () {});
-}
-
-let start = null;
-let wallpaperPaused = false;
-let pausedAt = 0;
-let ripples = [];
-let lastLowPowerFrame = 0;
-function loop(ts) {
-  if (start === null) start = ts;
-  if (wallpaperPaused) { requestAnimationFrame(loop); return; }
-  if (wpLowPower) {
-    if (ts - lastLowPowerFrame < 66) { requestAnimationFrame(loop); return; }
-    lastLowPowerFrame = ts;
+/* True-black/AMOLED export: crushes near-black pixels to pure #000 so an
+   OLED screen can switch them off. Image exports only — too expensive
+   to run on every video frame. */
+function wpApplyAmoledCrush(ctx, w, h, threshold) {
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] <= threshold && d[i + 1] <= threshold && d[i + 2] <= threshold) {
+      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+    }
   }
-  let t = (ts - start) / 1000;
-  if (wallpaperData.loopPerfect && audioLevel === 0) t = t % wallpaperData.loopSeconds;
-  const speed = wallpaperData.speed * (1 + audioLevel * 2.2);
-  const effects = wpLowPower ? { grain: 0, vignette: wallpaperData.effects.vignette, glow: 0, duotone: wallpaperData.effects.duotone } : wallpaperData.effects;
-  wpDrawFrame(wallpaperData.pattern, ctx, canvas.width, canvas.height, t, wallpaperData.colors, speed, effects, wallpaperData.timeOfDayTint);
-  if (wallpaperData.tapRipple && ripples.length) {
-    ripples = ripples.filter(function (r) { return ts - r.startTime < 1000; });
-    ripples.forEach(function (r) {
-      const age = (ts - r.startTime) / 1000;
+  ctx.putImageData(imgData, 0, 0);
+}
+
+/* ==========================================================================
+   Gradient & Mesh effects — glass, grain, vignette, glow
+   ----------------------------------------------------------------
+   Same effect code as the wallpaper studio. The live preview stays a CSS
+   gradient (instant, and it's what "Copy CSS" gives you); only when an
+   effect is on does a canvas layer paint the effected version on top,
+   exactly what the PNG export will contain.
+   ========================================================================== */
+var studioFxFrame = {};
+function studioFxActive(fx) {
+  return !!fx && ((fx.glass && fx.glass !== 'none') || fx.grain > 0 || fx.vignette > 0 || fx.glow > 0);
+}
+function paintStudioFx(studio, canvas, host) {
+  const state = studio === 'gradient' ? gradientState : meshState;
+  const r = host.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const ctx = canvas.getContext('2d');
+  if (studio === 'gradient') drawGradientToCanvas(ctx, w, h, state);
+  else drawMeshToCanvas(ctx, w, h, state);
+  wpApplyEffects(ctx, w, h, state.fx, 0);
+}
+function scheduleStudioFx(studio) {
+  if (studioFxFrame[studio]) return;
+  studioFxFrame[studio] = requestAnimationFrame(() => {
+    studioFxFrame[studio] = 0;
+    const host = document.getElementById(studio === 'gradient' ? 'gradientPreview' : 'meshPreview');
+    const state = studio === 'gradient' ? gradientState : meshState;
+    let c = host.querySelector(':scope > canvas.fx-layer');
+    if (!studioFxActive(state.fx)) { if (c) c.remove(); return; }
+    if (!c) { c = document.createElement('canvas'); c.className = 'fx-layer'; host.prepend(c); }
+    paintStudioFx(studio, c, host);
+  });
+}
+function mountFxCard(studio) {
+  const card = document.querySelector(`.fx-card[data-fx="${studio}"]`);
+  if (!card) return;
+  const P = studio + 'Fx';
+  card.innerHTML = `
+    <label class="control-label">Effects</label>
+    <div class="wp-field">
+      <span class="wp-save-label">Glass</span>
+      <select id="${P}Glass" class="select">
+        <option value="none">None</option><option value="frosted">Frosted panes</option><option value="fluted">Fluted glass</option>
+        <option value="liquid">Liquid drops</option><option value="prism">Prism light</option>
+      </select>
+    </div>
+    <div class="wp-param" id="${P}GlassAmountRow" hidden>
+      <label class="control-label-row wp-param-label" for="${P}GlassAmount"><span>Glass strength</span><span class="control-value" id="${P}GlassAmountValue">70%</span></label>
+      <input type="range" id="${P}GlassAmount" class="slider" min="10" max="100" value="70">
+    </div>
+    ${['grain', 'vignette', 'glow'].map(k => `
+    <div class="wp-param">
+      <label class="control-label-row wp-param-label" for="${P}${k}"><span>${k[0].toUpperCase() + k.slice(1)}</span><span class="control-value" id="${P}${k}Value">0%</span></label>
+      <input type="range" id="${P}${k}" class="slider" min="0" max="100" value="0">
+    </div>`).join('')}
+    <p class="hint">Shown in the preview and PNG. A little grain also stops color banding.</p>`;
+  const getState = () => (studio === 'gradient' ? gradientState : meshState);
+  const rerender = () => (studio === 'gradient' ? renderGradientPreview() : renderMeshPreview());
+  const ensure = () => { const st = getState(); st.fx = Object.assign({ glass: 'none', glassAmount: 0.7, grain: 0, vignette: 0, glow: 0 }, st.fx || {}); return st.fx; };
+  document.getElementById(`${P}Glass`).addEventListener('change', (e) => {
+    ensure().glass = e.target.value;
+    document.getElementById(`${P}GlassAmountRow`).hidden = e.target.value === 'none';
+    rerender();
+  });
+  document.getElementById(`${P}GlassAmount`).addEventListener('input', (e) => {
+    ensure().glassAmount = Number(e.target.value) / 100;
+    document.getElementById(`${P}GlassAmountValue`).textContent = `${e.target.value}%`;
+    rerender();
+  });
+  ['grain', 'vignette', 'glow'].forEach(k => {
+    document.getElementById(`${P}${k}`).addEventListener('input', (e) => {
+      ensure()[k] = Number(e.target.value) / 100;
+      document.getElementById(`${P}${k}Value`).textContent = `${e.target.value}%`;
+      rerender();
+    });
+  });
+}
+function syncFxCard(studio) {
+  const P = studio + 'Fx';
+  const el = document.getElementById(`${P}Glass`);
+  if (!el) return;
+  const fx = Object.assign({ glass: 'none', glassAmount: 0.7, grain: 0, vignette: 0, glow: 0 }, (studio === 'gradient' ? gradientState : meshState).fx || {});
+  el.value = fx.glass;
+  document.getElementById(`${P}GlassAmountRow`).hidden = fx.glass === 'none';
+  document.getElementById(`${P}GlassAmount`).value = Math.round(fx.glassAmount * 100);
+  document.getElementById(`${P}GlassAmountValue`).textContent = `${Math.round(fx.glassAmount * 100)}%`;
+  ['grain', 'vignette', 'glow'].forEach(k => {
+    const v = Math.round((fx[k] || 0) * 100);
+    document.getElementById(`${P}${k}`).value = v;
+    document.getElementById(`${P}${k}Value`).textContent = `${v}%`;
+  });
+}
+mountFxCard('gradient');
+mountFxCard('mesh');
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver((entries) => entries.forEach(en => scheduleStudioFx(en.target.id === 'gradientPreview' ? 'gradient' : 'mesh')));
+  ro.observe(document.getElementById('gradientPreview'));
+  ro.observe(document.getElementById('meshPreview'));
+}
+
+/* ==========================================================================
+   Wallpaper styles (2026)
+   ----------------------------------------------------------------
+   Every style is a pure function of time: draw(ctx, w, h, T, colors, p,
+   rnd), where T is seconds × speed, p holds the style's 0–1 knobs
+   (density, size, softness, angle, thickness, depth) and rnd(i) is a
+   seeded hash — so a layout is reproducible from its seed, "Layout"
+   shuffles only change the seed, and any frame can be re-rendered at any
+   size for exports and the seamless video loop. colors[0] is always the
+   background; the rest are the foreground palette.
+   ========================================================================== */
+function wpHashFn(seed) {
+  const s = seedToInt(String(seed || 'gradii'));
+  return (i) => {
+    let x = Math.imul((i | 0) ^ s, 0x9e3779b1);
+    x ^= x >>> 16; x = Math.imul(x, 0x85ebca6b);
+    x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35);
+    x ^= x >>> 16;
+    return (x >>> 0) / 4294967296;
+  };
+}
+function wpFg(C) { return C.length > 1 ? C.slice(1) : C; }
+function wpShade(hex, amt) {
+  const { h, s, l } = hexToHsl(hex);
+  return hslToHex(h, s, clamp(l + amt * 100, 0, 100));
+}
+/* Additive glows vanish on a light background (screen on near-white is
+   white), so light backgrounds switch to multiply, which darkens into
+   the color instead. */
+function wpGlowOp(bg) { return wpIsLightHex(bg) ? 'multiply' : 'screen'; }
+function wpEase(x) { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); }
+function wpPaletteAt(C, u) {
+  const fg = wpFg(C);
+  if (fg.length === 1) return fg[0];
+  const x = clamp(u, 0, 1) * (fg.length - 1);
+  const i = Math.min(fg.length - 2, Math.floor(x));
+  return wpLerpColor(fg[i], fg[i + 1], x - i);
+}
+/* The soft, drifting color field the glass styles sit on. */
+function wpColorField(ctx, w, h, T, C, rnd) {
+  const bg = C[0];
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = wpGlowOp(bg);
+  const fg = wpFg(C);
+  const m = Math.max(w, h);
+  fg.forEach((c, i) => {
+    const ph = rnd(i * 3 + 11) * 6.283;
+    const cx = w * (0.5 + 0.38 * Math.sin(T * 0.23 + ph));
+    const cy = h * (0.5 + 0.38 * Math.cos(T * 0.19 + ph * 1.4));
+    const r = m * (0.42 + 0.1 * Math.sin(T * 0.3 + i));
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, c);
+    g.addColorStop(1, wpHexToRgba(c, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* ---- Glass ---- */
+function wpStyleFrostedGlass(ctx, w, h, T, C, p, rnd) {
+  wpColorField(ctx, w, h, T, C, rnd);
+  wpGlassPanes(ctx, w, h, T, p, rnd, 1);
+}
+function wpStyleLiquidGlass(ctx, w, h, T, C, p, rnd) {
+  wpColorField(ctx, w, h, T, C, rnd);
+  wpLiquidDrops(ctx, w, h, T, p, rnd, 1);
+}
+function wpStyleFlutedGlass(ctx, w, h, T, C, p, rnd) {
+  wpColorField(ctx, w, h, T * 1.6, C, rnd);
+  wpFlutedGlass(ctx, w, h, p, 1);
+}
+function wpStylePrismLight(ctx, w, h, T, C, p, rnd) {
+  const bg = C[0];
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, wpShade(bg, -0.04));
+  g.addColorStop(1, wpShade(bg, 0.06));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalAlpha = 0.55;
+  ctx.globalCompositeOperation = wpGlowOp(bg);
+  wpFg(C).forEach((c, i) => {
+    const cx = w * (0.2 + 0.6 * rnd(i + 3)) + Math.sin(T * 0.2 + i) * w * 0.1;
+    const cy = h * (0.2 + 0.6 * rnd(i + 9));
+    const r = Math.max(w, h) * 0.45;
+    const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    rg.addColorStop(0, c);
+    rg.addColorStop(1, wpHexToRgba(c, 0));
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, w, h);
+  });
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  wpPrismBeams(ctx, w, h, T, p, 1);
+}
+
+/* ---- Abstract ---- */
+function wpStyleSilk(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const n = 3 + Math.round(p.density * 5);
+  const diag = Math.hypot(w, h);
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate((p.angle - 0.5) * Math.PI * 0.9);
+  const W = diag, H = diag;
+  const band = (H / n) * (1.3 + p.size);
+  for (let i = 0; i < n; i++) {
+    const color = wpFg(C)[i % wpFg(C).length];
+    const y0 = -H / 2 + (i + 0.3) * (H / n);
+    const f = 1.2 + rnd(i * 4 + 1) * 1.6, ph = rnd(i * 4 + 2) * 6.28, A = band * 0.45;
+    const top = [], bot = [];
+    for (let s = 0; s <= 48; s++) {
+      const x = -W / 2 + (W * s) / 48;
+      const u = s / 48;
+      const y = y0 + A * Math.sin(u * 6.283 * f + T * 0.35 + ph) + A * 0.4 * Math.sin(u * 6.283 * 2.3 - T * 0.22 + ph);
+      top.push([x, y]);
+      bot.push([x, y + band * (0.75 + 0.25 * Math.sin(u * 6.283 * 1.3 + T * 0.3 + i))]);
+    }
+    ctx.beginPath();
+    top.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    for (let k = bot.length - 1; k >= 0; k--) ctx.lineTo(bot[k][0], bot[k][1]);
+    ctx.closePath();
+    const lg = ctx.createLinearGradient(0, y0 - A, 0, y0 + band + A);
+    lg.addColorStop(0, wpShade(color, 0.22));
+    lg.addColorStop(0.35, color);
+    lg.addColorStop(0.7, wpShade(color, -0.12));
+    lg.addColorStop(1, wpShade(color, -0.3));
+    ctx.shadowColor = `rgba(0,0,0,${0.15 + 0.3 * p.depth})`;
+    ctx.shadowBlur = m * 0.04;
+    ctx.fillStyle = lg;
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = Math.max(1, m * 0.002);
+    ctx.beginPath();
+    top.forEach(([x, y], k) => (k ? ctx.lineTo(x, y + 2) : ctx.moveTo(x, y + 2)));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function wpStyleInk(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = wpGlowOp(C[0]);
+  const fg = wpFg(C);
+  const n = 10 + Math.round(p.density * 28);
+  for (let i = 0; i < n; i++) {
+    const c = fg[i % fg.length];
+    const a = rnd(i * 6 + 1) * 6.283, sp = 0.5 + rnd(i * 6 + 2);
+    const cx = w * (0.5 + 0.36 * Math.sin(T * 0.07 * sp + a) + 0.12 * Math.sin(T * 0.19 + i));
+    const cy = h * (0.5 + 0.36 * Math.cos(T * 0.06 * sp + a * 1.3) + 0.12 * Math.cos(T * 0.23 + i * 0.7));
+    const r = m * (0.05 + 0.2 * p.size) * (0.5 + rnd(i * 6 + 3));
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(a + T * 0.05 * (rnd(i * 6 + 4) - 0.5) * 4);
+    ctx.scale(1.9, 0.65 + 0.3 * p.softness);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    g.addColorStop(0, wpHexToRgba(c, 0.42));
+    g.addColorStop(0.55, wpHexToRgba(c, 0.18));
+    g.addColorStop(1, wpHexToRgba(c, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, 6.283);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.lineWidth = Math.max(1, m * 0.002);
+  for (let j = 0; j < 8; j++) {
+    const c = fg[j % fg.length];
+    ctx.strokeStyle = wpHexToRgba(c, 0.18);
+    ctx.beginPath();
+    const x0 = w * rnd(j * 9 + 50), y0 = h * rnd(j * 9 + 51);
+    ctx.moveTo(x0, y0);
+    ctx.bezierCurveTo(
+      x0 + Math.sin(T * 0.1 + j) * w * 0.4, y0 + h * 0.2,
+      w * rnd(j * 9 + 52) + Math.cos(T * 0.12 + j) * w * 0.2, h * rnd(j * 9 + 53),
+      w * rnd(j * 9 + 54), h * rnd(j * 9 + 55));
+    ctx.stroke();
+  }
+}
+function wpStylePaperLayers(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const n = 4 + Math.round(p.density * 6);
+  for (let i = 0; i < n; i++) {
+    const u = i / Math.max(1, n - 1);
+    const color = wpPaletteAt(C, u);
+    const yBase = h * (0.12 + 0.86 * (i + 1) / (n + 0.4));
+    const A = h * 0.035 * (0.5 + p.size * 1.5);
+    const f = 1 + rnd(i * 3 + 1) * 1.5, ph = rnd(i * 3 + 2) * 6.28, dir = i % 2 ? 1 : -1;
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let s = 0; s <= 40; s++) {
+      const x = (w * s) / 40, v = s / 40;
+      ctx.lineTo(x, yBase + A * Math.sin(v * 6.283 * f + T * 0.25 * dir + ph) + A * 0.45 * Math.sin(v * 6.283 * 2.7 - T * 0.18 + ph));
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.shadowColor = `rgba(0,0,0,${0.12 + 0.35 * p.depth})`;
+    ctx.shadowBlur = m * (0.01 + 0.04 * p.depth);
+    ctx.shadowOffsetY = -m * 0.006;
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+  ctx.shadowColor = 'transparent';
+}
+function wpStyleBauhaus(ctx, w, h, T, C, p, rnd) {
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C);
+  const cols = 3 + Math.round(p.density * 5);
+  const s = w / cols;
+  const rows = Math.ceil(h / s);
+  const pad = s * 0.06 * (1 - p.size);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const k = j * cols + i;
+      const x = i * s, y = j * s;
+      const c1 = fg[Math.floor(rnd(k * 5 + 1) * fg.length)];
+      const c2 = fg[Math.floor(rnd(k * 5 + 2) * fg.length)] === c1 ? C[0] : fg[Math.floor(rnd(k * 5 + 2) * fg.length)];
+      if (rnd(k * 5 + 3) < 0.3) { ctx.fillStyle = c2; ctx.fillRect(x, y, s, s); }
+      const phase = T * 0.22 + rnd(k * 5 + 4) * 5;
+      const turn = Math.floor(rnd(k * 5) * 4) + Math.floor(phase) + wpEase(((phase % 1) - 0.78) / 0.22);
       ctx.save();
-      ctx.globalAlpha = Math.max(0, 1 - age) * 0.5;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
+      ctx.translate(x + s / 2, y + s / 2);
+      ctx.rotate(turn * Math.PI / 2);
+      const r = s / 2 - pad;
+      ctx.fillStyle = c1;
       ctx.beginPath();
-      ctx.arc(r.x, r.y, age * Math.max(canvas.width, canvas.height) * 0.6, 0, Math.PI * 2);
-      ctx.stroke();
+      switch (Math.floor(rnd(k * 5 + 7) * 6)) {
+        case 0: ctx.arc(0, 0, r, 0, 6.283); break;
+        case 1: ctx.moveTo(-r, r); ctx.arc(0, r, r, Math.PI, 0); break;
+        case 2: ctx.moveTo(-r, -r); ctx.arc(-r, -r, r * 2, 0, Math.PI / 2); break;
+        case 3: ctx.rect(-r, -r, r * 2, r * 0.55); ctx.rect(-r, r * 0.45, r * 2, r * 0.55); break;
+        case 4: ctx.moveTo(-r, r); ctx.lineTo(r, r); ctx.lineTo(-r, -r); break;
+        default: ctx.rect(-r, -r, r * 2, r * 2); ctx.fill(); ctx.fillStyle = c2 === c1 ? C[0] : c2; ctx.beginPath(); ctx.arc(0, 0, r * 0.55, 0, 6.283);
+      }
+      ctx.closePath();
+      ctx.fill();
       ctx.restore();
-    });
-  }
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
-
-/* Tap-to-ripple + double-tap pause/resume share one listener since both
-   key off the same tap gesture: a second tap within 300ms of the first
-   is a double-tap (toggles pause, and shifts "start" forward by however
-   long it was paused so resuming doesn't jump the animation ahead);
-   anything else is a single tap (spawns a ripple, if that's on). */
-if (wallpaperData.tapRipple || wallpaperData.doubleTapPause) {
-  let lastTapTime = 0;
-  canvas.addEventListener('click', function (e) {
-    const now = performance.now();
-    if (wallpaperData.doubleTapPause && now - lastTapTime < 300) {
-      wallpaperPaused = !wallpaperPaused;
-      if (wallpaperPaused) pausedAt = now; else start += (now - pausedAt);
-      lastTapTime = 0;
-      return;
     }
-    lastTapTime = now;
-    if (wallpaperData.tapRipple) {
-      const rect = canvas.getBoundingClientRect();
-      ripples.push({
-        x: (e.clientX - rect.left) * (canvas.width / rect.width),
-        y: (e.clientY - rect.top) * (canvas.height / rect.height),
-        startTime: now,
-      });
+  }
+}
+function wpStyleOrbs(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, wpShade(C[0], 0.05));
+  g.addColorStop(1, wpShade(C[0], -0.05));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C);
+  const n = 4 + Math.round(p.density * 10);
+  const orbs = [];
+  for (let i = 0; i < n; i++) {
+    const r = m * (0.04 + 0.14 * p.size) * (0.45 + rnd(i * 4 + 1));
+    const cx = w * (0.5 + 0.42 * Math.sin(T * 0.12 * (0.5 + rnd(i * 4 + 2)) + rnd(i * 4 + 3) * 6.28));
+    const cy = h * (0.5 + 0.42 * Math.cos(T * 0.1 * (0.5 + rnd(i * 4)) + i * 1.9));
+    orbs.push({ r, cx, cy, c: fg[i % fg.length] });
+  }
+  orbs.sort((a, b) => a.r - b.r).forEach(o => {
+    const sh = ctx.createRadialGradient(o.cx, o.cy + o.r * (0.9 + p.depth * 0.6), 0, o.cx, o.cy + o.r * (0.9 + p.depth * 0.6), o.r * 1.1);
+    sh.addColorStop(0, `rgba(0,0,0,${0.18 + 0.2 * p.depth})`);
+    sh.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = sh;
+    ctx.fillRect(o.cx - o.r * 1.2, o.cy, o.r * 2.4, o.r * 2.4);
+    const body = ctx.createRadialGradient(o.cx - o.r * 0.35, o.cy - o.r * 0.4, o.r * 0.05, o.cx, o.cy, o.r);
+    body.addColorStop(0, wpShade(o.c, 0.3));
+    body.addColorStop(0.5, o.c);
+    body.addColorStop(1, wpShade(o.c, -0.35));
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(o.cx, o.cy, o.r, 0, 6.283);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(o.cx - o.r * 0.38, o.cy - o.r * 0.45, o.r * 0.22, o.r * 0.12, -0.6, 0, 6.283);
+    ctx.fill();
+  });
+}
+function wpStyleHolo(ctx, w, h, T, C, p) {
+  const ang = p.angle * Math.PI;
+  const dx = Math.cos(ang) * w, dy = Math.sin(ang) * h;
+  const base = ctx.createLinearGradient(w / 2 - dx / 2, h / 2 - dy / 2, w / 2 + dx / 2, h / 2 + dy / 2);
+  C.forEach((c, i) => base.addColorStop(i / Math.max(1, C.length - 1), c));
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, w, h);
+  for (let k = 0; k < 3; k++) {
+    const a = ang + (k * 40 + Math.sin(T * 0.2 + k) * 25) * Math.PI / 180;
+    const cx = w / 2, cy = h / 2, L = Math.hypot(w, h) / 2;
+    const g = ctx.createLinearGradient(cx - Math.cos(a) * L, cy - Math.sin(a) * L, cx + Math.cos(a) * L, cy + Math.sin(a) * L);
+    const h0 = (T * 25 + k * 70) % 360;
+    for (let s = 0; s <= 6; s++) g.addColorStop(s / 6, `hsl(${(h0 + s * 60) % 360}, 90%, 65%)`);
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+  const off = ((T * 0.15) % 1.6) - 0.3;
+  const sheen = ctx.createLinearGradient(0, 0, w, h);
+  sheen.addColorStop(clamp(off - 0.12, 0, 1), 'rgba(255,255,255,0)');
+  sheen.addColorStop(clamp(off, 0, 1), 'rgba(255,255,255,0.55)');
+  sheen.addColorStop(clamp(off + 0.12, 0, 1), 'rgba(255,255,255,0)');
+  ctx.globalCompositeOperation = 'overlay';
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = sheen;
+  ctx.fillRect(0, 0, w, h);
+  // fine crinkle lines, like foil
+  ctx.globalAlpha = 0.12 + 0.2 * p.density;
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  const step = Math.max(3, Math.min(w, h) / 90);
+  for (let x = -h; x < w; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x + h * 0.6, h); }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+function wpStyleTopo(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const step = m / (34 + p.density * 36);
+  const cols = Math.ceil(w / step) + 1, rows = Math.ceil(h / step) + 1;
+  const sc = (2.2 + 3 * (1 - p.size)) / m;
+  const ph1 = rnd(1) * 6.28, ph2 = rnd(2) * 6.28, ph3 = rnd(3) * 6.28;
+  const v = new Float32Array(cols * rows);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const x = i * step, y = j * step;
+      v[j * cols + i] = Math.sin(x * sc + T * 0.12 + ph1) * Math.cos(y * sc * 0.9 - T * 0.09)
+        + 0.6 * Math.sin((x + y) * sc * 0.7 + ph2 + T * 0.1)
+        + 0.4 * Math.cos(x * sc * 1.6 - y * sc * 1.1 + ph3);
+    }
+  }
+  const L = 7 + Math.round(p.density * 9);
+  ctx.lineWidth = Math.max(1, m * (0.002 + 0.007 * p.thickness));
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  for (let l = 0; l < L; l++) {
+    const th = -1.7 + (3.4 * (l + 0.5)) / L;
+    ctx.strokeStyle = wpPaletteAt(C, l / Math.max(1, L - 1));
+    ctx.beginPath();
+    for (let j = 0; j < rows - 1; j++) {
+      for (let i = 0; i < cols - 1; i++) {
+        const a = v[j * cols + i], b = v[j * cols + i + 1], c = v[(j + 1) * cols + i + 1], d = v[(j + 1) * cols + i];
+        const idx = (a > th ? 8 : 0) | (b > th ? 4 : 0) | (c > th ? 2 : 0) | (d > th ? 1 : 0);
+        if (idx === 0 || idx === 15) continue;
+        const x = i * step, y = j * step;
+        const top = [x + step * (th - a) / (b - a), y];
+        const right = [x + step, y + step * (th - b) / (c - b)];
+        const bottom = [x + step * (th - d) / (c - d), y + step];
+        const left = [x, y + step * (th - a) / (d - a)];
+        const seg = (P, Q) => { ctx.moveTo(P[0], P[1]); ctx.lineTo(Q[0], Q[1]); };
+        switch (idx) {
+          case 1: case 14: seg(left, bottom); break;
+          case 2: case 13: seg(bottom, right); break;
+          case 3: case 12: seg(left, right); break;
+          case 4: case 11: seg(top, right); break;
+          case 6: case 9: seg(top, bottom); break;
+          case 7: case 8: seg(left, top); break;
+          case 5: seg(left, top); seg(bottom, right); break;
+          case 10: seg(top, right); seg(left, bottom); break;
+        }
+      }
+    }
+    ctx.stroke();
+  }
+}
+function wpStyleGrainyPoster(ctx, w, h, T, C, p, rnd) {
+  const m = Math.max(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C);
+  fg.forEach((c, i) => {
+    const cx = w * (0.2 + 0.6 * rnd(i * 3 + 1)) + Math.sin(T * 0.18 + i * 2) * w * 0.12;
+    const cy = h * (0.2 + 0.6 * rnd(i * 3 + 2)) + Math.cos(T * 0.15 + i) * h * 0.1;
+    const r = m * (0.25 + 0.3 * p.size) * (0.7 + 0.5 * rnd(i * 3 + 3));
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, c);
+    g.addColorStop(0.45 * (1 - p.softness) + 0.1, wpHexToRgba(c, 0.85));
+    g.addColorStop(1, wpHexToRgba(c, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+  wpGrain(ctx, w, h, 0.3 + 0.5 * p.density, T);
+}
+
+/* ---- Patterns ---- */
+function wpStyleTruchet(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const c = m / (4 + p.density * 10);
+  const cols = Math.ceil(w / c), rows = Math.ceil(h / c);
+  const lg = ctx.createLinearGradient(0, 0, w, h);
+  wpFg(C).forEach((col, i, arr) => lg.addColorStop(arr.length > 1 ? i / (arr.length - 1) : 0, col));
+  ctx.strokeStyle = lg;
+  ctx.lineWidth = c * (0.08 + 0.3 * p.thickness);
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const k = j * cols + i;
+      const phase = T * 0.2 + rnd(k + 999) * 5;
+      const turn = (rnd(k) < 0.5 ? 0 : 1) + Math.floor(phase) + wpEase(((phase % 1) - 0.85) / 0.15);
+      ctx.save();
+      ctx.translate(i * c + c / 2, j * c + c / 2);
+      ctx.rotate(turn * Math.PI / 2);
+      ctx.moveTo(0, -c / 2);
+      ctx.arc(-c / 2, -c / 2, c / 2, 0, Math.PI / 2);
+      ctx.moveTo(0, c / 2);
+      ctx.arc(c / 2, c / 2, c / 2, Math.PI, Math.PI * 1.5);
+      ctx.restore();
+    }
+  }
+  ctx.stroke();
+}
+function wpStyleHalftone(ctx, w, h, T, C, p) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const s = m / (16 + p.density * 36);
+  const R = Math.hypot(w, h) / 2;
+  const bins = 6;
+  const paths = Array.from({ length: bins }, () => []);
+  const ang = p.angle * Math.PI / 2;
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  for (let gy = -R; gy < R; gy += s) {
+    for (let gx = -R; gx < R; gx += s) {
+      const x = w / 2 + gx * ca - gy * sa, y = h / 2 + gx * sa + gy * ca;
+      if (x < -s || y < -s || x > w + s || y > h + s) continue;
+      const d = Math.hypot(x - w / 2, y - h * 0.4) / R;
+      const v = 0.5 + 0.5 * Math.sin(d * 9 - T * 0.9) * Math.cos(gx / R * 3 + T * 0.3);
+      const r = s * 0.5 * (0.08 + 0.92 * v) * (0.6 + 0.7 * p.size);
+      const b = Math.min(bins - 1, Math.floor(((y / h) + 0.5 * v) / 1.5 * bins));
+      paths[Math.max(0, b)].push(x, y, r);
+    }
+  }
+  paths.forEach((arr, b) => {
+    ctx.fillStyle = wpPaletteAt(C, b / (bins - 1));
+    ctx.beginPath();
+    for (let q = 0; q < arr.length; q += 3) { ctx.moveTo(arr[q] + arr[q + 2], arr[q + 1]); ctx.arc(arr[q], arr[q + 1], arr[q + 2], 0, 6.283); }
+    ctx.fill();
+  });
+}
+function wpStyleIsoCubes(ctx, w, h, T, C, p) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C);
+  const s = m / (4 + p.density * 9);
+  const cw = s * Math.sqrt(3), rowH = s * 1.5;
+  for (let j = -1; j * rowH < h + s; j++) {
+    for (let i = -1; i * cw < w + cw; i++) {
+      const cx = i * cw + (j % 2 ? cw / 2 : 0), cy = j * rowH;
+      const wave = (Math.sin(i * 0.55 + T * 0.6) + Math.cos(j * 0.45 - T * 0.5) + 2) / 4;
+      const base = fg[Math.floor(wave * fg.length) % fg.length];
+      const lift = -s * 0.3 * p.depth * wave;
+      const top = wpShade(base, 0.14), left = base, right = wpShade(base, -0.18);
+      const y = cy + lift;
+      ctx.fillStyle = top;
+      ctx.beginPath(); ctx.moveTo(cx, y - s); ctx.lineTo(cx + cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx - cw / 2, y - s / 2); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = left;
+      ctx.beginPath(); ctx.moveTo(cx - cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx, y + s); ctx.lineTo(cx - cw / 2, y + s / 2); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = right;
+      ctx.beginPath(); ctx.moveTo(cx + cw / 2, y - s / 2); ctx.lineTo(cx, y); ctx.lineTo(cx, y + s); ctx.lineTo(cx + cw / 2, y + s / 2); ctx.closePath(); ctx.fill();
+    }
+  }
+}
+function wpStyleRetroStripes(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C);
+  const groups = 1 + Math.round(p.density * 3);
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate(p.angle * Math.PI * 2);
+  ctx.translate(-w / 2, -h / 2);
+  for (let g = 0; g < groups; g++) {
+    const cx = w * (groups === 1 ? 0.5 : 0.1 + 0.8 * (g / (groups - 1))) + (rnd(g) - 0.5) * w * 0.15;
+    const cy = h * (0.55 + 0.45 * rnd(g + 7));
+    const R = m * (0.4 + 0.5 * p.size) * (0.7 + 0.4 * rnd(g + 3));
+    const nb = 5 + Math.round(p.thickness * 4);
+    for (let k = 0; k < nb; k++) {
+      const r = R * (1 - k / nb) + Math.sin(T * 0.5 + k + g) * m * 0.006;
+      if (r <= 0) continue;
+      ctx.fillStyle = k === nb - 1 ? C[0] : fg[(k + g) % fg.length];
+      ctx.beginPath();
+      ctx.moveTo(cx - r, cy);
+      ctx.arc(cx, cy, r, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+function wpStyleFlowField(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C);
+  const N = 150 + Math.round(p.density * 850);
+  const steps = 18 + Math.round(p.size * 40);
+  const len = m * 0.007;
+  const sc = 3.2 / m;
+  const ph = rnd(1) * 6.28;
+  const turn = Math.PI * (0.7 + p.depth);
+  ctx.lineWidth = Math.max(0.6, m * (0.0008 + 0.004 * p.thickness));
+  ctx.lineCap = 'round';
+  ctx.globalAlpha = 0.75;
+  fg.forEach((col, ci) => {
+    ctx.strokeStyle = col;
+    ctx.beginPath();
+    for (let i = ci; i < N; i += fg.length) {
+      let x = rnd(i * 2 + 10) * w, y = rnd(i * 2 + 11) * h;
+      ctx.moveTo(x, y);
+      for (let s = 0; s < steps; s++) {
+        const a = (Math.sin(x * sc + T * 0.2) + Math.cos(y * sc * 1.3 - T * 0.15) + Math.sin((x + y) * sc * 0.7 + ph)) * turn / 3;
+        x += Math.cos(a) * len; y += Math.sin(a) * len;
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+}
+function wpStyleSeigaiha(ctx, w, h, T, C, p) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C);
+  const r = m / (3 + p.density * 7);
+  const rings = 3 + Math.round(p.thickness * 3);
+  for (let j = 0; j * (r / 2) < h + r * 2; j++) {
+    const off = (j % 2 ? r : 0);
+    for (let i = -1; i * 2 * r < w + r * 2; i++) {
+      const cx = i * 2 * r + off + Math.sin(T * 0.5 + j * 0.4) * r * 0.08;
+      const cy = j * (r / 2);
+      for (let k = 0; k < rings; k++) {
+        const rr = r * (1 - k / rings) * 0.98;
+        ctx.fillStyle = k % 2 ? C[0] : fg[(j + k / 2 + i) % fg.length | 0];
+        ctx.beginPath();
+        ctx.moveTo(cx - rr, cy);
+        ctx.arc(cx, cy, rr, Math.PI, 0);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+}
+function wpStyleTerrazzo(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, 0, w, h);
+  const fg = wpFg(C).concat(wpFg(C).map(c => wpShade(c, -0.15)));
+  const n = 60 + Math.round(p.density * 300);
+  for (let i = 0; i < n; i++) {
+    const q = rnd(i * 9 + 1);
+    const s = m * (0.008 + 0.05 * p.size) * (0.3 + q * q * 1.7);
+    const x = rnd(i * 9 + 2) * w + Math.sin(T * 0.1 + i) * m * 0.003;
+    const y = rnd(i * 9 + 3) * h + Math.cos(T * 0.08 + i) * m * 0.003;
+    const rot = rnd(i * 9 + 4) * 6.28 + T * 0.02 * (rnd(i * 9 + 5) - 0.5);
+    const verts = 5 + Math.floor(rnd(i * 9 + 6) * 3);
+    ctx.fillStyle = fg[Math.floor(rnd(i * 9 + 7) * fg.length)];
+    ctx.beginPath();
+    for (let v = 0; v < verts; v++) {
+      const a = rot + (v / verts) * 6.283;
+      const rr = s * (0.6 + 0.5 * rnd(i * 31 + v));
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+      v ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+function wpStyleSynthwave(ctx, w, h, T, C, p, rnd) {
+  const m = Math.min(w, h);
+  const fg = wpFg(C);
+  const c1 = fg[0], c2 = fg[1 % fg.length], c3 = fg[2 % fg.length];
+  const hz = h * 0.58;
+  const sky = ctx.createLinearGradient(0, 0, 0, hz);
+  sky.addColorStop(0, wpShade(C[0], -0.05));
+  sky.addColorStop(1, wpShade(c1, -0.1));
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, hz);
+  // stars
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  for (let i = 0; i < 60; i++) {
+    const tw = 0.5 + 0.5 * Math.sin(T * 2 + i);
+    ctx.globalAlpha = 0.3 + 0.5 * tw;
+    ctx.fillRect(rnd(i * 2) * w, rnd(i * 2 + 1) * hz * 0.7, Math.max(1, m * 0.002), Math.max(1, m * 0.002));
+  }
+  ctx.globalAlpha = 1;
+  // sun
+  const R = m * (0.16 + 0.16 * p.size);
+  const sx = w / 2, sy = hz - R * 0.35;
+  const sun = ctx.createLinearGradient(0, sy - R, 0, sy + R);
+  sun.addColorStop(0, c3);
+  sun.addColorStop(1, c2);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(sx, sy, R, 0, 6.283);
+  ctx.clip();
+  ctx.fillStyle = sun;
+  ctx.fillRect(sx - R, sy - R, R * 2, R * 2);
+  const scroll = (T * 0.3) % 1;
+  ctx.fillStyle = sky;
+  for (let k = 0; k < 8; k++) {
+    const yy = sy + R * (0.05 + (k + scroll) * 0.13);
+    ctx.fillRect(sx - R, yy, R * 2, R * 0.015 * (k + scroll + 1) * 2);
+  }
+  ctx.restore();
+  // mountains
+  ctx.fillStyle = wpShade(C[0], 0.04);
+  ctx.beginPath();
+  ctx.moveTo(0, hz);
+  for (let i = 0; i <= 12; i++) ctx.lineTo((w * i) / 12, hz - (i % 2 ? 1 : 0.35) * m * 0.08 * (0.5 + rnd(i + 40)));
+  ctx.lineTo(w, hz);
+  ctx.closePath();
+  ctx.fill();
+  // floor + perspective grid
+  ctx.fillStyle = C[0];
+  ctx.fillRect(0, hz, w, h - hz);
+  ctx.strokeStyle = c2;
+  ctx.shadowColor = c2;
+  ctx.shadowBlur = m * 0.01;
+  ctx.lineWidth = Math.max(1, m * (0.0015 + 0.003 * p.thickness));
+  ctx.beginPath();
+  const lanes = 8 + Math.round(p.density * 12);
+  for (let k = -lanes; k <= lanes; k++) {
+    ctx.moveTo(w / 2 + k * w * 0.02, hz);
+    ctx.lineTo(w / 2 + k * w * 0.35, h);
+  }
+  const zoff = (T * 0.6) % 1;
+  for (let z = 1; z < 14; z++) {
+    const d = (z - zoff);
+    if (d <= 0.2) continue;
+    const y = hz + (h - hz) * (1 / d) * 0.55;
+    if (y > h) continue;
+    ctx.moveTo(0, y); ctx.lineTo(w, y);
+  }
+  ctx.stroke();
+  ctx.shadowColor = 'transparent';
+  const glow = ctx.createLinearGradient(0, hz - m * 0.03, 0, hz + m * 0.03);
+  glow.addColorStop(0, wpHexToRgba(c2, 0));
+  glow.addColorStop(0.5, wpHexToRgba(c2, 0.6));
+  glow.addColorStop(1, wpHexToRgba(c2, 0));
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, hz - m * 0.03, w, m * 0.06);
+}
+
+/* Registry. Order within a category is the gallery order. pro: needs Pro.
+   params: which knobs the Adjust card shows for this style. Legacy styles
+   keep their original (ctx, w, h, t, colors, speed) signature. */
+const WP_CATEGORIES = [
+  { id: 'glass', name: 'Glass' },
+  { id: 'abstract', name: 'Abstract' },
+  { id: 'patterns', name: 'Patterns' },
+  { id: 'classic', name: 'Classic' },
+  { id: 'motion', name: 'Motion' },
+];
+const WP_PARAM_LABELS = { density: 'Amount', size: 'Size', softness: 'Softness', angle: 'Angle', thickness: 'Line weight', depth: 'Depth' };
+const WP_STYLES = [
+  { id: 'frostedGlass', name: 'Frosted Glass', cat: 'glass', params: ['density', 'size', 'softness'], draw: wpStyleFrostedGlass },
+  { id: 'flutedGlass', name: 'Fluted Glass', cat: 'glass', params: ['size', 'depth'], draw: wpStyleFlutedGlass },
+  { id: 'liquidGlass', name: 'Liquid Glass', cat: 'glass', pro: true, params: ['density', 'size', 'depth'], draw: wpStyleLiquidGlass },
+  { id: 'prismLight', name: 'Prism Light', cat: 'glass', pro: true, params: ['angle', 'size', 'softness'], draw: wpStylePrismLight },
+  { id: 'grainyPoster', name: 'Grainy Poster', cat: 'abstract', params: ['density', 'size', 'softness'], draw: wpStyleGrainyPoster },
+  { id: 'paperLayers', name: 'Paper Layers', cat: 'abstract', params: ['density', 'size', 'depth'], draw: wpStylePaperLayers },
+  { id: 'silk', name: 'Silk Folds', cat: 'abstract', pro: true, params: ['density', 'size', 'angle', 'depth'], draw: wpStyleSilk },
+  { id: 'ink', name: 'Ink in Water', cat: 'abstract', pro: true, params: ['density', 'size', 'softness'], draw: wpStyleInk },
+  { id: 'orbs', name: 'Glossy Orbs', cat: 'abstract', pro: true, params: ['density', 'size', 'depth'], draw: wpStyleOrbs },
+  { id: 'holo', name: 'Holographic', cat: 'abstract', pro: true, params: ['angle', 'density'], draw: wpStyleHolo },
+  { id: 'topo', name: 'Topographic', cat: 'abstract', pro: true, params: ['density', 'size', 'thickness'], draw: wpStyleTopo },
+  { id: 'bauhaus', name: 'Bauhaus', cat: 'patterns', params: ['density', 'size'], draw: wpStyleBauhaus },
+  { id: 'halftone', name: 'Halftone', cat: 'patterns', params: ['density', 'size', 'angle'], draw: wpStyleHalftone },
+  { id: 'retroStripes', name: 'Retro Stripes', cat: 'patterns', params: ['density', 'size', 'thickness', 'angle'], draw: wpStyleRetroStripes },
+  { id: 'truchet', name: 'Truchet Tiles', cat: 'patterns', pro: true, params: ['density', 'thickness'], draw: wpStyleTruchet },
+  { id: 'isoCubes', name: 'Iso Cubes', cat: 'patterns', pro: true, params: ['density', 'depth'], draw: wpStyleIsoCubes },
+  { id: 'flowField', name: 'Flow Field', cat: 'patterns', pro: true, params: ['density', 'size', 'thickness', 'depth'], draw: wpStyleFlowField },
+  { id: 'seigaiha', name: 'Seigaiha Waves', cat: 'patterns', pro: true, params: ['density', 'thickness'], draw: wpStyleSeigaiha },
+  { id: 'terrazzo', name: 'Terrazzo', cat: 'patterns', pro: true, params: ['density', 'size'], draw: wpStyleTerrazzo },
+  { id: 'synthwave', name: 'Synthwave', cat: 'patterns', pro: true, params: ['density', 'size', 'thickness'], draw: wpStyleSynthwave },
+  { id: 'flowingMesh', name: 'Flowing Mesh', cat: 'classic', legacy: wpDrawFlowingMesh },
+  { id: 'auroraFlow', name: 'Aurora Flow', cat: 'classic', legacy: wpDrawAuroraFlow },
+  { id: 'radialPulse', name: 'Radial Pulse', cat: 'classic', legacy: wpDrawRadialPulse },
+  { id: 'conicSpin', name: 'Conic Spin', cat: 'classic', legacy: wpDrawConicSpin },
+  { id: 'waveBands', name: 'Wave Bands', cat: 'classic', legacy: wpDrawWaveBands },
+  { id: 'starfield', name: 'Starfield', cat: 'motion', pro: true, legacy: wpDrawStarfield },
+  { id: 'plasma', name: 'Plasma', cat: 'motion', pro: true, legacy: wpDrawPlasma },
+  { id: 'ripple', name: 'Ripple', cat: 'motion', pro: true, legacy: wpDrawRipple },
+  { id: 'voronoi', name: 'Voronoi Cells', cat: 'motion', pro: true, legacy: wpDrawVoronoi },
+  { id: 'kaleidoscope', name: 'Kaleidoscope', cat: 'motion', pro: true, legacy: wpDrawKaleidoscope },
+  { id: 'perlinClouds', name: 'Cloud Drift', cat: 'motion', pro: true, legacy: wpDrawPerlinClouds },
+  { id: 'lavaLamp', name: 'Lava Lamp', cat: 'motion', pro: true, legacy: wpDrawLavaLamp },
+  { id: 'moire', name: 'Moiré', cat: 'motion', pro: true, legacy: wpDrawMoire },
+];
+const WP_STYLE_MAP = Object.fromEntries(WP_STYLES.map(s => [s.id, s]));
+const WP_DEFAULT_PARAMS = { density: 50, size: 50, softness: 50, angle: 10, thickness: 45, depth: 50 };
+
+function wpRenderStyle(id, ctx, w, h, t, colors, speed, params, seed) {
+  const st = WP_STYLE_MAP[id] || WP_STYLE_MAP.flowingMesh;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  if (st.legacy) st.legacy(ctx, w, h, t, colors, speed);
+  else {
+    const src = Object.assign({}, WP_DEFAULT_PARAMS, params || {});
+    const p = {};
+    Object.keys(WP_DEFAULT_PARAMS).forEach(k => { p[k] = clamp(Number(src[k]) || 0, 0, 100) / 100; });
+    st.draw(ctx, w, h, t * speed, colors, p, wpHashFn(seed));
+  }
+  ctx.restore();
+}
+/* One full frame: style, optional layered second style, then effects. */
+function wpRenderScene(ctx, w, h, t, s, opts) {
+  const colors = s.timeOfDayTint ? wpApplyTimeOfDayTint(s.colors) : s.colors;
+  wpRenderStyle(s.pattern, ctx, w, h, t, colors, s.speed, s.params, s.seed);
+  const ov = s.overlay;
+  if (ov && ov.style && ov.style !== 'none' && WP_STYLE_MAP[ov.style]) {
+    const buf = wpBuf('layer:' + ((opts && opts.bufKey) || 'main'), w, h);
+    const bc = buf.getContext('2d');
+    bc.clearRect(0, 0, w, h);
+    wpRenderStyle(ov.style, bc, w, h, t, colors, s.speed, s.params, (s.seed || '') + ':layer');
+    ctx.save();
+    ctx.globalAlpha = clamp(ov.opacity ?? 0.5, 0, 1);
+    ctx.globalCompositeOperation = ov.blend || 'soft-light';
+    ctx.drawImage(buf, 0, 0, w, h);
+    ctx.restore();
+  }
+  if (!(opts && opts.noEffects)) wpApplyEffects(ctx, w, h, s.effects, t);
+}
+
+/* ==========================================================================
+   Wallpaper studio — state and UI
+   ========================================================================== */
+
+/* Built-in looks: a style + colors + effects in one tap. */
+const WALLPAPER_PRESETS = [
+  { name: 'Nebula Drift', pattern: 'flowingMesh', speed: 1.0, colors: ['#05030f', '#6d5dfc', '#ff6b9d', '#22d3c5'], effects: { grain: 0.15, vignette: 0.2, glow: 0.25, duotone: null } },
+  { name: 'Frosted Dawn', pattern: 'frostedGlass', speed: 0.8, colors: ['#fdf1e8', '#ff9a8b', '#ff6a88', '#a18cd1'], effects: { grain: 0.08, vignette: 0, glow: 0, duotone: null } },
+  { name: 'Reeded Night', pattern: 'flutedGlass', speed: 1.0, colors: ['#07060d', '#7b2ff7', '#f107a3', '#00d2ff'], effects: { grain: 0.12, vignette: 0.25, glow: 0.2, duotone: null } },
+  { name: 'Bauhaus Poster', pattern: 'bauhaus', speed: 0.8, colors: ['#f1e9da', '#e4572e', '#29335c', '#f3a712', '#0f7173'], effects: { grain: 0.2, vignette: 0, glow: 0, duotone: null } },
+  { name: 'Risograph', pattern: 'grainyPoster', speed: 0.7, colors: ['#fff4e6', '#ff5e5b', '#00cecb', '#ffed66'], effects: { grain: 0.15, vignette: 0, glow: 0, duotone: null } },
+  { name: 'Northern Lights', pattern: 'auroraFlow', speed: 0.8, colors: ['#020814', '#00f2fe', '#43cea2', '#7b2ff7'], effects: { grain: 0.1, vignette: 0.15, glow: 0.4, duotone: null } },
+  { name: 'Paper Hills', pattern: 'paperLayers', speed: 0.6, colors: ['#fdf6ec', '#f6c28b', '#e76f51', '#2a9d8f', '#264653'], effects: { grain: 0.1, vignette: 0, glow: 0, duotone: null } },
+  { name: 'Seventies', pattern: 'retroStripes', speed: 0.6, colors: ['#fbeee0', '#d9480f', '#f59f00', '#6b4226'], effects: { grain: 0.18, vignette: 0.1, glow: 0, duotone: null } },
+  { name: 'Ocean Waves', pattern: 'waveBands', speed: 0.7, colors: ['#04263c', '#0077b6', '#00b4d8', '#90e0ef'], effects: { grain: 0.1, vignette: 0.2, glow: 0.15, duotone: null } },
+  { name: 'Film Noir', pattern: 'radialPulse', speed: 1.0, colors: ['#050505', '#b23a48', '#4a4e69'], effects: { grain: 0.45, vignette: 0.55, glow: 0.1, duotone: { shadow: '#0a0508', highlight: '#e8c4a0' } } },
+  { name: 'Citrus Spin', pattern: 'conicSpin', speed: 0.5, colors: ['#fffdf5', '#f7971e', '#ffd200', '#a8ff78'], effects: { grain: 0, vignette: 0, glow: 0.15, duotone: null } },
+  { name: 'Sepia Drift', pattern: 'flowingMesh', speed: 0.8, colors: ['#1a1006', '#c9944a', '#8a5a2b', '#e8c98f'], effects: { grain: 0.35, vignette: 0.4, glow: 0.15, duotone: { shadow: '#160f08', highlight: '#f0d9a8' } } },
+];
+
+const WP_EFFECTS_DEFAULT = { grain: 0, vignette: 0, glow: 0, duotone: null, glass: 'none', glassAmount: 0.7 };
+let wallpaperState = {
+  pattern: 'flowingMesh',
+  speed: 1.0,
+  live: true,
+  colors: ['#0f1020', '#6d5dfc', '#ff6b9d', '#22d3c5'],
+  locked: [false, false, false, false],
+  effects: { ...WP_EFFECTS_DEFAULT },
+  seed: null,
+  params: { ...WP_DEFAULT_PARAMS },
+  overlay: { style: 'none', opacity: 0.5, blend: 'soft-light' },
+  bgMode: 'auto',
+  harmony: 'random',
+  timeOfDayTint: false,
+  tapRipple: true,
+  doubleTapPause: true,
+  shakeRandomize: false,
+  parallax: false,
+  videoSeconds: 10,
+};
+
+function isWallpaperStyleAllowed(id) {
+  const st = WP_STYLE_MAP[id];
+  return !!st && (!st.pro || isProUnlocked());
+}
+/* Fills in anything missing (older share links, projects and saved looks
+   predate most of these fields) and drops Pro styles for free users. */
+function normalizeWallpaperState(s) {
+  const out = Object.assign({}, wallpaperState, s || {});
+  if (!WP_STYLE_MAP[out.pattern] || !isWallpaperStyleAllowed(out.pattern)) out.pattern = 'flowingMesh';
+  out.colors = (Array.isArray(out.colors) && out.colors.length >= 2 ? out.colors : wallpaperState.colors).slice(0, 6);
+  out.locked = out.colors.map((_, i) => !!(s && Array.isArray(s.locked) && s.locked[i]));
+  out.effects = Object.assign({}, WP_EFFECTS_DEFAULT, (s && s.effects) || {});
+  out.params = Object.assign({}, WP_DEFAULT_PARAMS, (s && s.params) || {});
+  out.overlay = Object.assign({ style: 'none', opacity: 0.5, blend: 'soft-light' }, (s && s.overlay) || {});
+  if (out.overlay.style !== 'none' && !isWallpaperStyleAllowed(out.overlay.style)) out.overlay.style = 'none';
+  out.speed = clamp(Number(out.speed) || 1, 0.2, 3);
+  ['loopPerfect', 'loopSeconds', 'realSunTimes', 'batteryAware', 'depthParallax', 'audioReactive'].forEach(k => delete out[k]);
+  return out;
+}
+
+const wallpaperCanvas = document.getElementById('wallpaperCanvas');
+const wallpaperCtx = wallpaperCanvas.getContext('2d');
+const wallpaperSpeedSlider = document.getElementById('wallpaperSpeedSlider');
+const wallpaperSpeedValue = document.getElementById('wallpaperSpeedValue');
+const wallpaperColorsList = document.getElementById('wallpaperColorsList');
+const wallpaperModeSeg = document.getElementById('wallpaperModeSeg');
+const btnWallpaperNewFrame = document.getElementById('btnWallpaperNewFrame');
+const wallpaperResolutionSelect = document.getElementById('wallpaperResolutionSelect');
+
+/* Shows what "My Screen" actually resolves to, so it's obvious the
+   export is sized (and oriented) for this device. */
+function updateWallpaperResolutionHint() {
+  const hint = document.getElementById('wallpaperResolutionHint');
+  if (!hint) return;
+  if (wallpaperResolutionSelect.value === 'auto') {
+    const size = getDeviceExportSize();
+    hint.textContent = `${size.w}×${size.h}`;
+  } else {
+    const [w, h] = wallpaperResolutionSelect.value.split('x');
+    hint.textContent = `${w}×${h}`;
+  }
+}
+wallpaperResolutionSelect.addEventListener('change', updateWallpaperResolutionHint);
+window.addEventListener('resize', updateWallpaperResolutionHint);
+window.addEventListener('orientationchange', () => setTimeout(updateWallpaperResolutionHint, 200));
+
+/* ---- preview loop ---- */
+let wallpaperAnimId = null;
+let wallpaperAnimStart = null;
+let wallpaperFrozenT = 0;
+const wpInteract = { ripples: [], tiltX: 0, tiltY: 0, targetX: 0, targetY: 0 };
+
+function resizeWallpaperCanvas() {
+  const rect = wallpaperCanvas.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  wallpaperCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+  wallpaperCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+}
+
+function drawWallpaperFrame(t) {
+  const w = wallpaperCanvas.width, h = wallpaperCanvas.height;
+  const ctx = wallpaperCtx;
+  if (wallpaperState.parallax) {
+    // Tilt (or pointer, on a computer) shifts the scene a little; the
+    // scene is drawn slightly oversized so the edges never show.
+    wpInteract.tiltX += (wpInteract.targetX - wpInteract.tiltX) * 0.12;
+    wpInteract.tiltY += (wpInteract.targetY - wpInteract.tiltY) * 0.12;
+    const buf = wpBuf('parallax', w, h);
+    wpRenderScene(buf.getContext('2d'), w, h, t, wallpaperState, { bufKey: 'preview' });
+    const k = 1.08, m = Math.min(w, h) * 0.035;
+    ctx.save();
+    ctx.globalCompositeOperation = 'copy';
+    ctx.translate(w / 2 + wpInteract.tiltX * m, h / 2 + wpInteract.tiltY * m);
+    ctx.scale(k, k);
+    ctx.drawImage(buf, -w / 2, -h / 2, w, h);
+    ctx.restore();
+    // a nearer layer of soft specks moving faster = depth
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 24; i++) {
+      const r = Math.min(w, h) * (0.004 + 0.01 * ((i * 37) % 10) / 10);
+      const x = ((i * 0.618) % 1) * w + wpInteract.tiltX * m * 2.6;
+      const y = (((i * 0.382 + t * 0.01) % 1)) * h + wpInteract.tiltY * m * 2.6;
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 6.283);
+      ctx.fill();
+    }
+    ctx.restore();
+  } else {
+    wpRenderScene(ctx, w, h, t, wallpaperState, { bufKey: 'preview' });
+  }
+  drawWallpaperRipples(ctx, w, h);
+}
+function drawWallpaperRipples(ctx, w, h) {
+  const now = performance.now();
+  wpInteract.ripples = wpInteract.ripples.filter(r => now - r.start < 1400);
+  const m = Math.min(w, h);
+  wpInteract.ripples.forEach(r => {
+    const age = (now - r.start) / 1400;
+    for (let k = 0; k < 3; k++) {
+      const a = age - k * 0.12;
+      if (a <= 0) continue;
+      ctx.strokeStyle = `rgba(255,255,255,${0.55 * (1 - a)})`;
+      ctx.lineWidth = Math.max(1, m * 0.006 * (1 - a));
+      ctx.beginPath();
+      ctx.arc(r.x * w, r.y * h, m * 0.5 * a, 0, 6.283);
+      ctx.stroke();
     }
   });
 }
 
-/* Shake-to-randomize (Advanced Mode): a large, sudden jerk in
-   accelerationIncludingGravity between two consecutive readings, rate-
-   limited to once every 1.2s so one shake doesn't fire a dozen times. */
-if (wallpaperData.shakeRandomize && window.DeviceMotionEvent) {
-  let lastShakeTime = 0;
-  let lastAccel = null;
-  function handleMotion(e) {
-    const a = e.accelerationIncludingGravity || e.acceleration;
-    if (!a || a.x === null) return;
-    if (lastAccel) {
-      const delta = Math.abs(a.x - lastAccel.x) + Math.abs(a.y - lastAccel.y) + Math.abs(a.z - lastAccel.z);
-      const now = performance.now();
-      if (delta > 28 && now - lastShakeTime > 1200) {
-        lastShakeTime = now;
-        const seed = Math.random().toString(36).slice(2, 8);
-        const rng = mulberry32(seedToInt(seed));
-        const n = wallpaperData.colors.length;
-        const baseHue = rng() * 360;
-        wallpaperData.colors = Array.from({ length: n }, function (_, i) {
-          if (i === 0) return wpHslToHex(baseHue, 30 + rng() * 20, 8 + rng() * 10);
-          return wpHslToHex(baseHue + (rng() - 0.5) * 150, 55 + rng() * 35, 45 + rng() * 25);
-        });
-      }
-    }
-    lastAccel = a;
-  }
-  function startMotion() { window.addEventListener('devicemotion', handleMotion); }
-  if (typeof DeviceMotionEvent.requestPermission === 'function') {
-    document.addEventListener('click', function once() {
-      DeviceMotionEvent.requestPermission().then(function (state) {
-        if (state === 'granted') startMotion();
-      }).catch(function () {});
-      document.removeEventListener('click', once);
-    }, { once: true });
-  } else {
-    startMotion();
+function wallpaperTick(ts) {
+  if (wallpaperAnimStart === null) wallpaperAnimStart = ts - wallpaperFrozenT * 1000;
+  if (wallpaperState.live) wallpaperFrozenT = (ts - wallpaperAnimStart) / 1000;
+  else wallpaperAnimStart = ts - wallpaperFrozenT * 1000;
+  drawWallpaperFrame(wallpaperFrozenT);
+  // Still mode keeps ticking only while a ripple or tilt is settling.
+  const settling = wpInteract.ripples.length || (wallpaperState.parallax && (Math.abs(wpInteract.targetX - wpInteract.tiltX) > 0.01 || Math.abs(wpInteract.targetY - wpInteract.tiltY) > 0.01));
+  if (wallpaperState.live || settling) wallpaperAnimId = requestAnimationFrame(wallpaperTick);
+  else wallpaperAnimId = null;
+}
+function startWallpaperAnimation() {
+  if (wallpaperAnimId !== null) return;
+  wallpaperAnimStart = null;
+  wallpaperAnimId = requestAnimationFrame(wallpaperTick);
+}
+function stopWallpaperAnimation() {
+  if (wallpaperAnimId !== null) {
+    cancelAnimationFrame(wallpaperAnimId);
+    wallpaperAnimId = null;
   }
 }
+/* Redraw after any change: live mode repaints next frame anyway. */
+function refreshWallpaper() {
+  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  scheduleWallpaperThumbs();
+}
+function activateWallpaperTab() {
+  resizeWallpaperCanvas();
+  updateWallpaperResolutionHint();
+  if (wallpaperState.live) startWallpaperAnimation();
+  else drawWallpaperFrame(wallpaperFrozenT);
+  scheduleWallpaperThumbs();
+}
 
-/* Tilt parallax: the canvas itself is rendered ~12% larger than the
-   viewport on each axis and CSS-shifted within that slack as the phone
-   tilts, so tilting reveals a bit more of one edge and hides a bit of
-   the other — a real depth illusion, with zero changes to how the
-   pattern itself is drawn. Falls back to doing nothing wherever
-   DeviceOrientationEvent isn't available or permission is denied; iOS
-   13+ requires that permission be requested from a user gesture, so
-   this waits for the first tap/click before asking.
-   Depth-layered parallax (Advanced Mode) adds a second, sparse dust
-   layer above the main canvas that tilts at a stronger multiplier —
-   two things moving at different rates reads as real depth, one flat
-   tilted image doesn't. */
-if (wallpaperData.parallax && window.DeviceOrientationEvent) {
-  canvas.style.width = '112vw';
-  canvas.style.height = '112vh';
-  canvas.style.position = 'fixed';
-  canvas.style.left = '-6vw';
-  canvas.style.top = '-6vh';
-  canvas.style.transition = 'transform 0.2s ease-out';
-
-  let dust = null, dctx = null;
-  if (wallpaperData.depthParallax) {
-    dust = document.createElement('canvas');
-    dust.style.position = 'fixed';
-    dust.style.left = '0';
-    dust.style.top = '0';
-    dust.style.width = '100vw';
-    dust.style.height = '100vh';
-    dust.style.pointerEvents = 'none';
-    dust.style.transition = 'transform 0.2s ease-out';
-    document.body.appendChild(dust);
-    dctx = dust.getContext('2d');
-    function resizeDust() { dust.width = window.innerWidth; dust.height = window.innerHeight; }
-    resizeDust();
-    window.addEventListener('resize', resizeDust);
-    (function drawDust(ts) {
-      dctx.clearRect(0, 0, dust.width, dust.height);
-      const t = (ts || 0) / 1000;
-      for (let i = 0; i < 40; i++) {
-        const s1 = Math.sin(i * 12.9898) * 43758.5453; const rx = s1 - Math.floor(s1);
-        const s2 = Math.sin(i * 78.233) * 12345.678; const ry = s2 - Math.floor(s2);
-        const x = ((rx * dust.width + t * 8) % dust.width + dust.width) % dust.width;
-        const y = ry * dust.height;
-        dctx.globalAlpha = 0.25 + 0.2 * Math.sin(t + i);
-        dctx.fillStyle = '#ffffff';
-        dctx.beginPath();
-        dctx.arc(x, y, 1.4, 0, Math.PI * 2);
-        dctx.fill();
-      }
-      requestAnimationFrame(drawDust);
-    })();
+/* ---- style gallery ---- */
+const wallpaperStyleGrid = document.getElementById('wallpaperStyleGrid');
+const wallpaperStyleCats = document.getElementById('wallpaperStyleCats');
+let wallpaperStyleCat = 'glass';
+function renderWallpaperStyleCats() {
+  wallpaperStyleCats.innerHTML = '';
+  WP_CATEGORIES.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'collection-chip wp-cat' + (c.id === wallpaperStyleCat ? ' active' : '');
+    b.textContent = c.name;
+    b.setAttribute('aria-pressed', c.id === wallpaperStyleCat ? 'true' : 'false');
+    b.addEventListener('click', () => { wallpaperStyleCat = c.id; renderWallpaperStyleCats(); renderWallpaperStyleGrid(); });
+    wallpaperStyleCats.appendChild(b);
+  });
+}
+function renderWallpaperStyleGrid() {
+  wallpaperStyleGrid.innerHTML = '';
+  WP_STYLES.filter(s => s.cat === wallpaperStyleCat).forEach(st => {
+    const b = document.createElement('button');
+    b.className = 'wp-style' + (st.id === wallpaperState.pattern ? ' active' : '');
+    b.dataset.style = st.id;
+    b.setAttribute('aria-pressed', st.id === wallpaperState.pattern ? 'true' : 'false');
+    const locked = st.pro && !isProUnlocked();
+    b.innerHTML = `<canvas width="120" height="180" aria-hidden="true"></canvas><span>${st.name}</span>${locked ? '<em class="wp-pro">PRO</em>' : ''}`;
+    b.addEventListener('click', () => selectWallpaperStyle(st.id));
+    wallpaperStyleGrid.appendChild(b);
+  });
+  drawWallpaperThumbs();
+}
+let wpThumbTimer = null;
+function scheduleWallpaperThumbs() {
+  clearTimeout(wpThumbTimer);
+  wpThumbTimer = setTimeout(drawWallpaperThumbs, 250);
+}
+function drawWallpaperThumbs() {
+  if (activeTab !== 'wallpaper') return;
+  wallpaperStyleGrid.querySelectorAll('.wp-style').forEach(b => {
+    const c = b.querySelector('canvas');
+    wpRenderStyle(b.dataset.style, c.getContext('2d'), c.width, c.height, 3, wallpaperState.colors, 1, WP_DEFAULT_PARAMS, wallpaperState.seed || 'thumb');
+  });
+}
+function selectWallpaperStyle(id) {
+  if (!isWallpaperStyleAllowed(id)) {
+    showToast(`${WP_STYLE_MAP[id].name} is a Pro feature — unlock for ₹39`);
+    openProModal();
+    return;
   }
+  wallpaperState.pattern = id;
+  syncWallpaperStyleUI();
+  refreshWallpaper();
+  haptic(8);
+}
+function syncWallpaperStyleUI() {
+  const st = WP_STYLE_MAP[wallpaperState.pattern];
+  if (st && st.cat !== wallpaperStyleCat) { wallpaperStyleCat = st.cat; renderWallpaperStyleCats(); renderWallpaperStyleGrid(); }
+  wallpaperStyleGrid.querySelectorAll('.wp-style').forEach(b => {
+    const on = b.dataset.style === wallpaperState.pattern;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  document.getElementById('wallpaperStyleName').textContent = st ? st.name : '';
+  renderWallpaperParamSliders();
+}
 
-  function applyTilt(gamma, beta) {
-    const x = Math.max(-1, Math.min(1, gamma / 30)) * 5;
-    const y = Math.max(-1, Math.min(1, (beta - 45) / 30)) * 5;
-    canvas.style.transform = 'translate(' + x + 'vw, ' + y + 'vh)';
-    if (dust) dust.style.transform = 'translate(' + (x * 2.2) + 'vw, ' + (y * 2.2) + 'vh)';
-  }
-  function startOrientation() {
-    window.addEventListener('deviceorientation', function (e) {
-      if (e.gamma !== null && e.beta !== null) applyTilt(e.gamma, e.beta);
+/* ---- Adjust: speed + the current style's own knobs ---- */
+function renderWallpaperParamSliders() {
+  const box = document.getElementById('wallpaperParamSliders');
+  const st = WP_STYLE_MAP[wallpaperState.pattern];
+  box.innerHTML = '';
+  (st && st.params ? st.params : []).forEach(key => {
+    const id = 'wpParam-' + key;
+    const row = document.createElement('div');
+    row.className = 'wp-param';
+    row.innerHTML = `<label class="control-label-row wp-param-label" for="${id}"><span>${WP_PARAM_LABELS[key]}</span><span class="control-value">${Math.round(wallpaperState.params[key])}</span></label>
+      <input type="range" id="${id}" class="slider" min="0" max="100" value="${wallpaperState.params[key]}">`;
+    const input = row.querySelector('input');
+    const val = row.querySelector('.control-value');
+    input.addEventListener('input', () => {
+      wallpaperState.params[key] = Number(input.value);
+      val.textContent = input.value;
+      refreshWallpaper();
     });
-  }
-  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-    document.addEventListener('click', function once() {
-      DeviceOrientationEvent.requestPermission().then(function (state) {
-        if (state === 'granted') startOrientation();
-      }).catch(function () {});
-      document.removeEventListener('click', once);
-    }, { once: true });
-  } else {
-    startOrientation();
-  }
+    box.appendChild(row);
+  });
 }
-</script>
-</body>
-</html>
-`;
-  downloadBlob(html, 'gradii-live-wallpaper.html', 'text/html');
-}
-
-document.getElementById('btnDownloadWallpaperHtml').addEventListener('click', () => {
-  exportWallpaperHtml();
-  const audioOn = document.getElementById('wallpaperAudioReactive').checked;
-  showToast(audioOn ? 'Live wallpaper HTML downloaded — it will ask for mic access' : 'Live wallpaper HTML downloaded');
+wallpaperSpeedSlider.addEventListener('input', () => {
+  wallpaperState.speed = Number(wallpaperSpeedSlider.value) / 10;
+  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
 });
 
-/* The wallpaper canvas's backing store has to track its on-screen box —
-   it changes on tab switch (the panel is display:none until the fade-out
-   of the previous one finishes), on rotation, and when the phone stage
-   grip resizes it. Measuring at click time used to catch the still-hidden
-   panel and leave the default 300×150 buffer stretched across the frame. */
-if (window.ResizeObserver) {
-  new ResizeObserver(() => {
-    resizeWallpaperCanvas();
-    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
-  }).observe(wallpaperCanvas);
+/* ---- colors: chips with locks, background, harmony, saved palettes ---- */
+function renderWallpaperColorsList() {
+  wallpaperColorsList.innerHTML = '';
+  wallpaperState.colors.forEach((color, i) => {
+    const locked = !!wallpaperState.locked[i];
+    const chip = document.createElement('div');
+    chip.className = 'wallpaper-color-chip' + (locked ? ' locked' : '');
+    chip.innerHTML = `
+      <input type="color" value="${color}" aria-label="${i === 0 ? 'Background' : 'Color ' + i}" title="${i === 0 ? 'Background' : colorName(color)}">
+      <button class="wallpaper-color-lock" aria-pressed="${locked}" title="${locked ? 'Unlock' : 'Keep when shuffling'}" aria-label="${locked ? 'Unlock color' : 'Lock color'}">${locked ? '🔒' : '🔓'}</button>
+      <button class="wallpaper-color-remove" title="Remove color" aria-label="Remove color" ${wallpaperState.colors.length <= 2 ? 'disabled' : ''}>✕</button>
+    `;
+    chip.querySelector('input').addEventListener('input', (e) => {
+      wallpaperState.colors[i] = e.target.value;
+      wallpaperState.locked[i] = true;
+      chip.classList.add('locked');
+      chip.querySelector('.wallpaper-color-lock').textContent = '🔒';
+      refreshWallpaper();
+    });
+    chip.querySelector('.wallpaper-color-lock').addEventListener('click', () => {
+      wallpaperState.locked[i] = !wallpaperState.locked[i];
+      renderWallpaperColorsList();
+      haptic(8);
+    });
+    chip.querySelector('.wallpaper-color-remove').addEventListener('click', () => {
+      if (wallpaperState.colors.length <= 2) return;
+      wallpaperState.colors.splice(i, 1);
+      wallpaperState.locked.splice(i, 1);
+      renderWallpaperColorsList();
+      refreshWallpaper();
+    });
+    wallpaperColorsList.appendChild(chip);
+  });
+}
+document.getElementById('btnAddWallpaperColor').addEventListener('click', () => {
+  if (wallpaperState.colors.length >= 6) { showToast('Maximum 6 colors'); return; }
+  const fg = wallpaperState.colors.slice(1);
+  const base = fg.length ? hexToHsl(fg[fg.length - 1]) : { h: Math.random() * 360 };
+  wallpaperState.colors.push(hslToHex(base.h + 40 + Math.random() * 40, 60 + Math.random() * 25, 50 + Math.random() * 15));
+  wallpaperState.locked.push(false);
+  renderWallpaperColorsList();
+  refreshWallpaper();
+});
+
+/* Background color by mode — the fix for "why is there always black":
+   the background used to be forced near-black on every shuffle. */
+function wpBackgroundFor(mode, hue) {
+  if (mode === 'auto') {
+    const r = Math.random();
+    mode = r < 0.4 ? 'dark' : r < 0.72 ? 'light' : 'colorful';
+  }
+  if (mode === 'light') return hslToHex(hue + (Math.random() - 0.5) * 30, 25 + Math.random() * 30, 90 + Math.random() * 6);
+  if (mode === 'colorful') return hslToHex(hue + 180 + (Math.random() - 0.5) * 40, 55 + Math.random() * 25, 38 + Math.random() * 16);
+  return hslToHex(hue, 30 + Math.random() * 25, 6 + Math.random() * 9);
+}
+function randomizeWallpaperColorsOnly() {
+  const n = Math.max(2, wallpaperState.colors.length);
+  const fgCount = n - 1;
+  const existingFg = wallpaperState.colors.slice(1);
+  const lockedFg = wallpaperState.locked.slice(1).map(Boolean);
+  const fg = generatePaletteColors(wallpaperState.harmony || 'random', fgCount, existingFg, lockedFg);
+  const hue = hexToHsl(fg.find((_, i) => !lockedFg[i]) || fg[0]).h;
+  const bg = wallpaperState.locked[0] ? wallpaperState.colors[0] : wpBackgroundFor(wallpaperState.bgMode, hue);
+  wallpaperState.colors = [bg, ...fg];
+  // On a light background, lift very light foreground colors so they
+  // don't disappear into it.
+  if (wpIsLightHex(bg)) {
+    wallpaperState.colors = wallpaperState.colors.map((c, i) => {
+      if (i === 0 || wallpaperState.locked[i]) return c;
+      const { h, s, l } = hexToHsl(c);
+      return l > 72 ? hslToHex(h, s, 50 + Math.random() * 15) : c;
+    });
+  }
+  applyBrandKitToWallpaper();
+}
+function newWallpaperSeed() {
+  wallpaperState.seed = Math.random().toString(36).slice(2, 8);
+}
+function randomizeWallpaper(what) {
+  if (what !== 'layout') randomizeWallpaperColorsOnly();
+  if (what !== 'colors') newWallpaperSeed();
+  renderWallpaperColorsList();
+  syncWallpaperSeedUI();
+  refreshWallpaper();
+  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
+  if (!suppressRecentGenerated) pushRecentGenerated('wallpaper', `linear-gradient(135deg, ${wallpaperState.colors.join(', ')})`, wallpaperState);
+}
+/* Name kept for the many existing callers (Space, ⌘K, flick, boot). */
+function randomizeWallpaperColors() { randomizeWallpaper('both'); }
+let suppressRecentGenerated = false;
+
+document.getElementById('btnRandomWallpaperColors').addEventListener('click', () => randomizeWallpaper('both'));
+document.getElementById('btnShuffleWallpaperColors').addEventListener('click', () => { randomizeWallpaper('colors'); haptic(8); });
+document.getElementById('btnShuffleWallpaperLayout').addEventListener('click', () => { randomizeWallpaper('layout'); haptic(8); });
+
+const wallpaperBgSeg = document.getElementById('wallpaperBgSeg');
+wallpaperBgSeg.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-bg]');
+  if (!b) return;
+  wallpaperState.bgMode = b.dataset.bg;
+  syncWallpaperBgUI();
+  if (!wallpaperState.locked[0]) {
+    wallpaperState.colors[0] = wpBackgroundFor(wallpaperState.bgMode, hexToHsl(wallpaperState.colors[1] || '#6d5dfc').h);
+    renderWallpaperColorsList();
+    refreshWallpaper();
+  }
+});
+function syncWallpaperBgUI() {
+  wallpaperBgSeg.querySelectorAll('[data-bg]').forEach(b => {
+    const on = b.dataset.bg === wallpaperState.bgMode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+const wallpaperHarmonySelect = document.getElementById('wallpaperHarmonySelect');
+wallpaperHarmonySelect.addEventListener('change', () => {
+  wallpaperState.harmony = wallpaperHarmonySelect.value;
+  randomizeWallpaper('colors');
+});
+const wallpaperFromPalette = document.getElementById('wallpaperFromPalette');
+function renderWallpaperPaletteOptions() {
+  const saved = getSavedPalettes();
+  wallpaperFromPalette.innerHTML = '<option value="">Use a saved palette…</option>' + (paletteState.colors.length ? '<option value="current">Current Palettes tab</option>' : '')
+    + saved.slice(0, 20).map((p, i) => `<option value="${i}">${p.collection ? escapeHtmlText(p.collection) + ' · ' : ''}${p.colors.map(c => colorName(c)).slice(0, 3).join(', ')}</option>`).join('');
+  wallpaperFromPalette.disabled = !saved.length && !paletteState.colors.length;
+}
+wallpaperFromPalette.addEventListener('focus', renderWallpaperPaletteOptions);
+wallpaperFromPalette.addEventListener('change', () => {
+  const v = wallpaperFromPalette.value;
+  if (!v) return;
+  const src = v === 'current' ? paletteState.colors : (getSavedPalettes()[Number(v)] || {}).colors;
+  if (!src || !src.length) return;
+  const fg = src.slice(0, 5);
+  const bg = wallpaperState.locked[0] ? wallpaperState.colors[0] : wpBackgroundFor(wallpaperState.bgMode, hexToHsl(fg[0]).h);
+  wallpaperState.colors = [bg, ...fg];
+  wallpaperState.locked = wallpaperState.colors.map((_, i) => i === 0 ? !!wallpaperState.locked[0] : false);
+  wallpaperFromPalette.value = '';
+  renderWallpaperColorsList();
+  refreshWallpaper();
+  showToast('Palette applied');
+});
+
+/* ---- layer a second style ---- */
+const wallpaperOverlayStyle = document.getElementById('wallpaperOverlayStyle');
+const wallpaperOverlayControls = document.getElementById('wallpaperOverlayControls');
+const wallpaperOverlayOpacity = document.getElementById('wallpaperOverlayOpacity');
+const wallpaperOverlayBlend = document.getElementById('wallpaperOverlayBlend');
+wallpaperOverlayStyle.innerHTML = '<option value="none">None</option>' + WP_CATEGORIES.map(c =>
+  `<optgroup label="${c.name}">${WP_STYLES.filter(s => s.cat === c.id).map(s => `<option value="${s.id}">${s.name}${s.pro ? ' ★' : ''}</option>`).join('')}</optgroup>`).join('');
+wallpaperOverlayStyle.addEventListener('change', () => {
+  const v = wallpaperOverlayStyle.value;
+  if (v !== 'none' && !isWallpaperStyleAllowed(v)) {
+    showToast(`${WP_STYLE_MAP[v].name} is a Pro feature — unlock for ₹39`);
+    wallpaperOverlayStyle.value = wallpaperState.overlay.style;
+    openProModal();
+    return;
+  }
+  wallpaperState.overlay.style = v;
+  syncWallpaperOverlayUI();
+  refreshWallpaper();
+});
+wallpaperOverlayOpacity.addEventListener('input', () => {
+  wallpaperState.overlay.opacity = Number(wallpaperOverlayOpacity.value) / 100;
+  document.getElementById('wallpaperOverlayOpacityValue').textContent = `${wallpaperOverlayOpacity.value}%`;
+  refreshWallpaper();
+});
+wallpaperOverlayBlend.addEventListener('change', () => {
+  wallpaperState.overlay.blend = wallpaperOverlayBlend.value;
+  refreshWallpaper();
+});
+function syncWallpaperOverlayUI() {
+  const ov = wallpaperState.overlay;
+  wallpaperOverlayStyle.value = ov.style;
+  wallpaperOverlayControls.hidden = ov.style === 'none';
+  wallpaperOverlayOpacity.value = Math.round(ov.opacity * 100);
+  document.getElementById('wallpaperOverlayOpacityValue').textContent = `${Math.round(ov.opacity * 100)}%`;
+  wallpaperOverlayBlend.value = ov.blend;
+}
+
+/* ---- effects ---- */
+const wallpaperGrainSlider = document.getElementById('wallpaperGrainSlider');
+const wallpaperVignetteSlider = document.getElementById('wallpaperVignetteSlider');
+const wallpaperGlowSlider = document.getElementById('wallpaperGlowSlider');
+const wallpaperGlassSelect = document.getElementById('wallpaperGlassSelect');
+const wallpaperDuotoneToggle = document.getElementById('wallpaperDuotoneToggle');
+const wallpaperDuotoneColors = document.getElementById('wallpaperDuotoneColors');
+const wallpaperDuotoneShadow = document.getElementById('wallpaperDuotoneShadow');
+const wallpaperDuotoneHighlight = document.getElementById('wallpaperDuotoneHighlight');
+[['wallpaperGrainSlider', 'grain', 'wallpaperGrainValue'], ['wallpaperVignetteSlider', 'vignette', 'wallpaperVignetteValue'], ['wallpaperGlowSlider', 'glow', 'wallpaperGlowValue']].forEach(([id, key, valId]) => {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => {
+    wallpaperState.effects[key] = Number(el.value) / 100;
+    document.getElementById(valId).textContent = `${el.value}%`;
+    refreshWallpaper();
+  });
+});
+wallpaperGlassSelect.addEventListener('change', () => {
+  wallpaperState.effects.glass = wallpaperGlassSelect.value;
+  refreshWallpaper();
+});
+function updateWallpaperDuotone() {
+  wallpaperState.effects.duotone = wallpaperDuotoneToggle.checked
+    ? { shadow: wallpaperDuotoneShadow.value, highlight: wallpaperDuotoneHighlight.value }
+    : null;
+  wallpaperDuotoneColors.hidden = !wallpaperDuotoneToggle.checked;
+  refreshWallpaper();
+}
+wallpaperDuotoneToggle.addEventListener('change', updateWallpaperDuotone);
+wallpaperDuotoneShadow.addEventListener('input', updateWallpaperDuotone);
+wallpaperDuotoneHighlight.addEventListener('input', updateWallpaperDuotone);
+function syncWallpaperEffectsUI() {
+  const e = wallpaperState.effects;
+  [['wallpaperGrainSlider', 'grain', 'wallpaperGrainValue'], ['wallpaperVignetteSlider', 'vignette', 'wallpaperVignetteValue'], ['wallpaperGlowSlider', 'glow', 'wallpaperGlowValue']].forEach(([id, key, valId]) => {
+    const v = Math.round((e[key] || 0) * 100);
+    document.getElementById(id).value = v;
+    document.getElementById(valId).textContent = `${v}%`;
+  });
+  wallpaperGlassSelect.value = e.glass || 'none';
+  wallpaperDuotoneToggle.checked = !!e.duotone;
+  wallpaperDuotoneColors.hidden = !e.duotone;
+  if (e.duotone) { wallpaperDuotoneShadow.value = e.duotone.shadow; wallpaperDuotoneHighlight.value = e.duotone.highlight; }
+  document.getElementById('wallpaperTimeOfDayToggle').checked = !!wallpaperState.timeOfDayTint;
+}
+document.getElementById('btnRemixWallpaper').addEventListener('click', () => {
+  const hue = Math.random() * 360;
+  const glassRoll = Math.random();
+  wallpaperState.effects = {
+    grain: Math.random() * 0.4,
+    vignette: Math.random() * 0.5,
+    glow: Math.random() * 0.5,
+    glass: glassRoll < 0.6 ? 'none' : ['frosted', 'fluted', 'liquid', 'prism'][Math.floor(Math.random() * 4)],
+    glassAmount: 0.7,
+    duotone: Math.random() < 0.25
+      ? { shadow: hslToHex(hue, 40 + Math.random() * 20, 8 + Math.random() * 8), highlight: hslToHex(hue + (Math.random() - 0.5) * 40, 30 + Math.random() * 30, 78 + Math.random() * 15) }
+      : null,
+  };
+  syncWallpaperEffectsUI();
+  refreshWallpaper();
+  quirkyBounce(document.querySelector('#panel-wallpaper .preview-frame'));
+  showToast('Effects remixed');
+});
+/* Time-of-day tint: asks for location once to use real sunrise/sunset;
+   works without it on a fixed hour curve. */
+document.getElementById('wallpaperTimeOfDayToggle').addEventListener('change', (e) => {
+  wallpaperState.timeOfDayTint = e.target.checked;
+  if (e.target.checked && !window.wpSunTimes && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { window.wpSunTimes = wpComputeSunTimes(pos.coords.latitude, pos.coords.longitude, new Date()); refreshWallpaper(); },
+      () => {},
+      { timeout: 8000, maximumAge: 6 * 3600 * 1000 }
+    );
+  }
+  refreshWallpaper();
+});
+
+/* ---- seed ---- */
+const wallpaperSeedInput = document.getElementById('wallpaperSeedInput');
+function syncWallpaperSeedUI() {
+  if (document.activeElement !== wallpaperSeedInput) wallpaperSeedInput.value = wallpaperState.seed || '';
+}
+wallpaperSeedInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const v = wallpaperSeedInput.value.trim();
+  if (!v) return;
+  wallpaperState.seed = v.slice(0, 24);
+  refreshWallpaper();
+  showToast('Layout seed applied');
+});
+document.getElementById('btnCopySeed').addEventListener('click', () => {
+  if (!wallpaperState.seed) { newWallpaperSeed(); syncWallpaperSeedUI(); }
+  copyText(wallpaperState.seed, 'Seed copied');
+});
+function seedToInt(seedStr) {
+  let h = 0;
+  for (let i = 0; i < seedStr.length; i++) h = (Math.imul(31, h) + seedStr.charCodeAt(i)) | 0;
+  return h;
+}
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ---- looks: your saved favorites + built-in packs ---- */
+function getWallpaperFavorites() {
+  try { const l = JSON.parse(localStorage.getItem('gradii_wallpaper_favorites') || '[]'); return Array.isArray(l) ? l : []; }
+  catch (e) { return []; }
+}
+function setWallpaperFavorites(list) {
+  try { localStorage.setItem('gradii_wallpaper_favorites', JSON.stringify(list)); } catch (e) { /* ignore */ }
+}
+function wallpaperLookState() {
+  const s = JSON.parse(JSON.stringify(wallpaperState));
+  delete s.live;
+  return s;
+}
+function applyWallpaperLook(look) {
+  const keepLive = wallpaperState.live;
+  wallpaperState = normalizeWallpaperState(Object.assign({}, wallpaperState, look));
+  wallpaperState.live = keepLive;
+  applyWallpaperStateToUI();
+}
+function applyWallpaperPreset(preset) {
+  applyWallpaperLook({ pattern: preset.pattern, speed: preset.speed, colors: [...preset.colors], locked: preset.colors.map(() => false), effects: Object.assign({}, WP_EFFECTS_DEFAULT, JSON.parse(JSON.stringify(preset.effects || {}))), overlay: { style: 'none', opacity: 0.5, blend: 'soft-light' } });
+}
+function drawLookThumb(canvas, look) {
+  const s = normalizeWallpaperState(look);
+  wpRenderScene(canvas.getContext('2d'), canvas.width, canvas.height, 3, s, { bufKey: 'thumb' });
+}
+function renderWallpaperLooks() {
+  const grid = document.getElementById('wallpaperLooksGrid');
+  grid.innerHTML = '';
+  const favs = getWallpaperFavorites();
+  favs.forEach(f => {
+    const b = document.createElement('div');
+    b.className = 'wp-look';
+    b.innerHTML = `<button class="wp-look-open" aria-label="Apply saved look"><canvas width="96" height="144"></canvas></button><button class="wp-look-del" aria-label="Delete saved look" title="Delete">✕</button>`;
+    drawLookThumb(b.querySelector('canvas'), f.state);
+    b.querySelector('.wp-look-open').addEventListener('click', () => { applyWallpaperLook(f.state); showToast('Look applied'); });
+    b.querySelector('.wp-look-del').addEventListener('click', () => {
+      setWallpaperFavorites(getWallpaperFavorites().filter(x => x.id !== f.id));
+      renderWallpaperLooks();
+    });
+    grid.appendChild(b);
+  });
+  WALLPAPER_PRESETS.forEach(preset => {
+    const b = document.createElement('button');
+    b.className = 'wp-look wp-look-pack';
+    b.title = preset.name;
+    b.innerHTML = `<canvas width="96" height="144"></canvas><span>${preset.name}</span>`;
+    drawLookThumb(b.querySelector('canvas'), { pattern: preset.pattern, colors: preset.colors, effects: preset.effects, speed: preset.speed });
+    b.addEventListener('click', () => { applyWallpaperPreset(preset); showToast(`Loaded "${preset.name}"`); });
+    grid.appendChild(b);
+  });
+}
+document.getElementById('btnSaveWallpaperLook').addEventListener('click', () => {
+  const list = getWallpaperFavorites();
+  const cap = isProUnlocked() ? 60 : 6;
+  if (list.length >= cap) { showToast(`Free keeps ${cap} looks — unlock Pro for more`); openProModal(); return; }
+  list.unshift({ id: Date.now(), state: wallpaperLookState() });
+  setWallpaperFavorites(list);
+  renderWallpaperLooks();
+  showToast('Look saved');
+  haptic(12);
+});
+
+/* ---- when Gradii opens: daily pick or seasonal pick (Pro) ---- */
+function applySeasonalWallpaperStyle() {
+  const month = new Date().getMonth();
+  const season = month <= 1 || month === 11 ? 0 : month <= 4 ? 1 : month <= 7 ? 2 : 3;
+  const names = ['Reeded Night', 'Frosted Dawn', 'Ocean Waves', 'Seventies'];
+  applyWallpaperPreset(WALLPAPER_PRESETS.find(p => p.name === names[season]) || WALLPAPER_PRESETS[0]);
+}
+function applyWallpaperOfTheDay() {
+  const now = new Date();
+  const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+  applyWallpaperPreset(WALLPAPER_PRESETS[dayOfYear % WALLPAPER_PRESETS.length]);
+}
+const wallpaperOnOpenSelect = document.getElementById('wallpaperOnOpenSelect');
+function getWallpaperOnOpen() {
+  try {
+    const v = localStorage.getItem('gradii_wallpaper_on_open');
+    if (v) return v;
+    // carry over the two older separate toggles
+    if (localStorage.getItem('gradii_wallpaper_seasonal') === '1') return 'seasonal';
+    if (localStorage.getItem('gradii_wallpaper_of_the_day') === '1') return 'daily';
+  } catch (e) { /* ignore */ }
+  return 'off';
+}
+wallpaperOnOpenSelect.addEventListener('change', () => {
+  const v = wallpaperOnOpenSelect.value;
+  if (v !== 'off' && !isProUnlocked()) {
+    showToast('Auto-pick on open is a Pro feature — unlock for ₹39');
+    wallpaperOnOpenSelect.value = 'off';
+    openProModal();
+    return;
+  }
+  try { localStorage.setItem('gradii_wallpaper_on_open', v); } catch (e) { /* ignore */ }
+  if (v === 'daily') applyWallpaperOfTheDay();
+  if (v === 'seasonal') applySeasonalWallpaperStyle();
+});
+
+/* ---- phone screen helpers ---- */
+document.getElementById('wallpaperSafeZoneToggle').addEventListener('change', (e) => {
+  document.getElementById('wallpaperSafeZoneOverlay').hidden = !e.target.checked;
+});
+
+/* ---- touch & motion (in the app: preview + full screen) ---- */
+async function requestMotionPermission() {
+  const needs = [window.DeviceMotionEvent, window.DeviceOrientationEvent].filter(E => E && typeof E.requestPermission === 'function');
+  for (const E of needs) {
+    try { if ((await E.requestPermission()) !== 'granted') return false; } catch (e) { return false; }
+  }
+  return true;
+}
+let wpLastShake = 0;
+let wpLastAccel = null;
+window.addEventListener('devicemotion', (e) => {
+  if (!wallpaperState.shakeRandomize || activeTab !== 'wallpaper') return;
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x == null) return;
+  if (wpLastAccel) {
+    const delta = Math.abs(a.x - wpLastAccel.x) + Math.abs(a.y - wpLastAccel.y) + Math.abs(a.z - wpLastAccel.z);
+    const now = Date.now();
+    if (delta > 28 && now - wpLastShake > 1200) {
+      wpLastShake = now;
+      randomizeWallpaper('both');
+      haptic([10, 40, 10]);
+    }
+  }
+  wpLastAccel = { x: a.x, y: a.y, z: a.z };
+});
+window.addEventListener('deviceorientation', (e) => {
+  if (!wallpaperState.parallax || e.gamma == null) return;
+  wpInteract.targetX = clamp(e.gamma / 30, -1, 1);
+  wpInteract.targetY = clamp((e.beta - 45) / 30, -1, 1);
+  if (!wallpaperState.live) startWallpaperAnimation();
+});
+wallpaperCanvas.addEventListener('pointermove', (e) => {
+  if (!wallpaperState.parallax || e.pointerType !== 'mouse') return;
+  const r = wallpaperCanvas.getBoundingClientRect();
+  wpInteract.targetX = clamp(((e.clientX - r.left) / r.width - 0.5) * 2, -1, 1);
+  wpInteract.targetY = clamp(((e.clientY - r.top) / r.height - 0.5) * 2, -1, 1);
+  if (!wallpaperState.live) startWallpaperAnimation();
+});
+let wpTapDown = null, wpLastTap = 0;
+wallpaperCanvas.addEventListener('pointerdown', (e) => { wpTapDown = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+wallpaperCanvas.addEventListener('pointerup', (e) => {
+  if (!wpTapDown) return;
+  const moved = Math.hypot(e.clientX - wpTapDown.x, e.clientY - wpTapDown.y);
+  const dt = performance.now() - wpTapDown.t;
+  wpTapDown = null;
+  if (moved > 12 || dt > 350) return;
+  const now = performance.now();
+  if (wallpaperState.doubleTapPause && now - wpLastTap < 320) {
+    wpLastTap = 0;
+    setWallpaperLive(!wallpaperState.live);
+    showToast(wallpaperState.live ? 'Playing' : 'Paused');
+    return;
+  }
+  wpLastTap = now;
+  if (wallpaperState.tapRipple) {
+    const r = wallpaperCanvas.getBoundingClientRect();
+    wpInteract.ripples.push({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, start: now });
+    startWallpaperAnimation();
+  }
+});
+[['wallpaperTapRipple', 'tapRipple'], ['wallpaperDoubleTapPause', 'doubleTapPause']].forEach(([id, key]) => {
+  document.getElementById(id).addEventListener('change', (e) => { wallpaperState[key] = e.target.checked; });
+});
+[['wallpaperShakeRandomize', 'shakeRandomize'], ['wallpaperParallaxToggle', 'parallax']].forEach(([id, key]) => {
+  document.getElementById(id).addEventListener('change', async (e) => {
+    const on = e.target.checked;
+    if (on && !(await requestMotionPermission())) {
+      e.target.checked = false;
+      showToast('Motion access was denied — allow it in Settings › Safari › Motion & Orientation');
+      return;
+    }
+    wallpaperState[key] = on;
+    if (key === 'parallax' && !on) { wpInteract.targetX = wpInteract.targetY = 0; }
+    refreshWallpaper();
+  });
+});
+function syncWallpaperMotionUI() {
+  document.getElementById('wallpaperTapRipple').checked = !!wallpaperState.tapRipple;
+  document.getElementById('wallpaperDoubleTapPause').checked = !!wallpaperState.doubleTapPause;
+  // Sensor toggles need a fresh permission tap on iOS, so they start off.
+  document.getElementById('wallpaperShakeRandomize').checked = !!wallpaperState.shakeRandomize;
+  document.getElementById('wallpaperParallaxToggle').checked = !!wallpaperState.parallax;
+}
+
+/* ---- live / still ---- */
+function setWallpaperLive(live) {
+  wallpaperState.live = live;
+  wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', (b.dataset.mode === 'live') === live));
+  btnWallpaperNewFrame.hidden = live;
+  if (live) startWallpaperAnimation();
+  else { stopWallpaperAnimation(); drawWallpaperFrame(wallpaperFrozenT); }
+}
+wallpaperModeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (btn) setWallpaperLive(btn.dataset.mode === 'live');
+});
+btnWallpaperNewFrame.addEventListener('click', () => {
+  wallpaperFrozenT = Math.random() * 60;
+  drawWallpaperFrame(wallpaperFrozenT);
+});
+
+/* One place that pushes wallpaperState into every control — used by
+   share links, undo/redo, recents, projects, looks and packs. */
+function applyWallpaperStateToUI() {
+  wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
+  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
+  wallpaperHarmonySelect.value = wallpaperState.harmony || 'random';
+  syncWallpaperBgUI();
+  syncWallpaperStyleUI();
+  renderWallpaperColorsList();
+  syncWallpaperEffectsUI();
+  syncWallpaperOverlayUI();
+  syncWallpaperSeedUI();
+  syncWallpaperMotionUI();
+  wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', (b.dataset.mode === 'live') === wallpaperState.live));
+  btnWallpaperNewFrame.hidden = wallpaperState.live;
+  refreshWallpaper();
+}
+
+/* ---- exports ---- */
+function renderWallpaperExport(w, h, t, amoled) {
+  const canvas = document.getElementById('exportCanvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  wpRenderScene(ctx, w, h, t, wallpaperState, { bufKey: 'export' });
+  if (amoled) wpApplyAmoledCrush(ctx, w, h, 28);
+  drawWatermark(ctx, w, h);
+  return canvas;
+}
+function wpAmoledOn() { return document.getElementById('wallpaperAmoledToggle').checked; }
+document.getElementById('btnDownloadWallpaperPng').addEventListener('click', () => {
+  const size = resolveExportSize(wallpaperResolutionSelect);
+  if (!size) return;
+  const canvas = renderWallpaperExport(size.w, size.h, wallpaperFrozenT, wpAmoledOn());
+  downloadCanvasPng(canvas, `wallpaper-${size.w}x${size.h}.png`);
+  showToast('Wallpaper PNG downloaded');
+});
+document.getElementById('btnCopyWallpaperImage').addEventListener('click', () => {
+  const size = resolveExportSize(wallpaperResolutionSelect);
+  if (!size) return;
+  copyCanvasToClipboard(renderWallpaperExport(size.w, size.h, wallpaperFrozenT, wpAmoledOn()));
+});
+document.getElementById('btnShareWallpaper').addEventListener('click', () => copyShareLink('wallpaper', wallpaperLookState()));
+document.getElementById('btnExtractPaletteFromWallpaper').addEventListener('click', () => {
+  const colors = extractColorsFromCanvas(wallpaperCanvas, paletteState.count || 5);
+  if (!colors.length) { showToast('Could not read colors from the wallpaper'); return; }
+  paletteState.colors = colors;
+  paletteState.locked = colors.map(() => false);
+  paletteState.count = colors.length;
+  paletteCountSlider.value = paletteState.count;
+  paletteCountValue.textContent = paletteState.count;
+  renderPaletteSwatches();
+  pushPaletteHistory();
+  setActiveTab('palette');
+  showToast('Palette extracted from this wallpaper');
+});
+
+/* Android: hand the image to the system "set wallpaper" screen. */
+const btnSetAsWallpaper = document.getElementById('btnSetAsWallpaper');
+if (isNativeApp() && window.Capacitor.Plugins.WallpaperSetter) btnSetAsWallpaper.hidden = false;
+btnSetAsWallpaper.addEventListener('click', async () => {
+  const { w, h } = getDeviceExportSize();
+  const canvas = renderWallpaperExport(w, h, wallpaperFrozenT, wpAmoledOn());
+  canvas.toBlob(async (blob) => {
+    try {
+      const base64 = await blobToBase64(blob);
+      const written = await window.Capacitor.Plugins.Filesystem.writeFile({ path: `wallpaper-${Date.now()}.png`, data: base64, directory: 'CACHE', recursive: true });
+      await window.Capacitor.Plugins.WallpaperSetter.setWallpaper({ uri: written.uri });
+    } catch (e) {
+      showToast('Could not open wallpaper chooser: ' + (e && e.message ? e.message : 'unknown error'));
+    }
+  }, 'image/png');
+});
+
+/* ---- live wallpaper video ----
+   Two encoders, best first:
+   1. WebCodecs + a small MP4 muxer (loaded on first use): every frame is
+      rendered at an exact 1/30 s step and encoded offline, so the video is
+      a smooth 30 fps on any device, however long each frame takes to draw.
+   2. MediaRecorder (fallback where WebCodecs is missing): records in real
+      time, so a slow device gets fewer frames.
+   Either way the loop is seamless with no toggle: over the last stretch
+   the frame crossfades into the frames from just *before* the start, so
+   the last frame flows straight back into the first. */
+const MP4_MUXER_SRC = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.min.js';
+let mp4MuxerLoading = null;
+function loadMp4Muxer() {
+  if (window.Mp4Muxer) return Promise.resolve(true);
+  if (!mp4MuxerLoading) {
+    mp4MuxerLoading = new Promise(resolve => {
+      const sc = document.createElement('script');
+      sc.src = MP4_MUXER_SRC;
+      sc.onload = () => resolve(!!window.Mp4Muxer);
+      sc.onerror = () => { mp4MuxerLoading = null; resolve(false); };
+      document.head.appendChild(sc);
+    });
+  }
+  return mp4MuxerLoading;
+}
+const WP_VIDEO_TYPES = ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+function pickVideoType() {
+  if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return null;
+  return WP_VIDEO_TYPES.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; } }) || null;
+}
+function renderLoopFrame(ctx, w, h, t, L, fade) {
+  wpRenderScene(ctx, w, h, t, wallpaperState, { bufKey: 'video' });
+  if (t > L - fade) {
+    const k = wpEase((t - (L - fade)) / fade);
+    const buf = wpBuf('videoLoop', w, h);
+    wpRenderScene(buf.getContext('2d'), w, h, t - L, wallpaperState, { bufKey: 'videoLoop' });
+    ctx.save();
+    ctx.globalAlpha = k;
+    ctx.drawImage(buf, 0, 0);
+    ctx.restore();
+  }
+  drawWatermark(ctx, w, h);
+}
+let wpVideoJob = null;
+const wallpaperVideoSeg = document.getElementById('wallpaperVideoLengthSeg');
+wallpaperVideoSeg.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-seconds]');
+  if (!b) return;
+  const secs = Number(b.dataset.seconds);
+  if (secs > 10 && !isProUnlocked()) {
+    showToast('Videos longer than 10s are a Pro feature — unlock for ₹39');
+    openProModal();
+    return;
+  }
+  wallpaperState.videoSeconds = secs;
+  syncWallpaperVideoUI();
+});
+function syncWallpaperVideoUI() {
+  wallpaperVideoSeg.querySelectorAll('[data-seconds]').forEach(b => {
+    const on = Number(b.dataset.seconds) === wallpaperState.videoSeconds;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+const nextPaint = () => new Promise(r => requestAnimationFrame(() => r()));
+async function encodeWithWebCodecs(canvas, ctx, w, h, L, fade, fps, progress) {
+  if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return null;
+  if (!(await loadMp4Muxer())) return null;
+  const bitrate = Math.min(20e6, Math.max(5e6, w * h * 5));
+  // H.264 first (plays everywhere, iPhone/iPad Photos included); VP9 in
+  // MP4 only where the device has no H.264 encoder.
+  let config = null, muxCodec = 'avc';
+  for (const [codec, mc] of [['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42002a', 'avc'], ['avc1.42001f', 'avc'], ['vp09.00.40.08', 'vp9'], ['vp09.00.31.08', 'vp9']]) {
+    const c = { codec, width: w, height: h, bitrate, framerate: fps };
+    try { if ((await VideoEncoder.isConfigSupported(c)).supported) { config = c; muxCodec = mc; break; } } catch (e) { /* try next */ }
+  }
+  if (!config) return null;
+  const muxer = new window.Mp4Muxer.Muxer({ target: new window.Mp4Muxer.ArrayBufferTarget(), video: { codec: muxCodec, width: w, height: h }, fastStart: 'in-memory' });
+  let encodeError = null;
+  const encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { encodeError = e; } });
+  encoder.configure(config);
+  const N = Math.round(L * fps);
+  for (let i = 0; i < N; i++) {
+    if (wpVideoJob.cancelled || encodeError) break;
+    renderLoopFrame(ctx, w, h, i / fps, L, fade);
+    const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / fps), duration: Math.round(1e6 / fps) });
+    encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+    frame.close();
+    progress((i + 1) / N);
+    if (i % 3 === 2 || encoder.encodeQueueSize > 6) await nextPaint();
+  }
+  if (encodeError) throw encodeError;
+  await encoder.flush();
+  encoder.close();
+  if (wpVideoJob.cancelled) return 'cancelled';
+  muxer.finalize();
+  return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+}
+async function encodeWithRecorder(canvas, ctx, w, h, L, fade, progress) {
+  const type = pickVideoType();
+  if (!type || typeof canvas.captureStream !== 'function') return null;
+  // In the document (invisibly): a detached canvas only hands its first
+  // frame to captureStream in Chromium, which made a still video.
+  canvas.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1';
+  document.body.appendChild(canvas);
+  renderLoopFrame(ctx, w, h, 0, L, fade);
+  let stream = canvas.captureStream(0);
+  let track = stream.getVideoTracks()[0];
+  const manual = !!(track && typeof track.requestFrame === 'function');
+  if (!manual) { stream.getTracks().forEach(tr => tr.stop()); stream = canvas.captureStream(30); }
+  const push = () => { if (manual) track.requestFrame(); };
+  const recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: Math.min(16e6, Math.max(4e6, w * h * 4)) });
+  wpVideoJob.recorder = recorder;
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  const done = new Promise(resolve => { recorder.onstop = resolve; });
+  recorder.start(250);
+  push();
+  const start = performance.now();
+  await new Promise(resolve => {
+    function frame(now) {
+      if (wpVideoJob.cancelled) { resolve(); return; }
+      const t = (now - start) / 1000;
+      if (t >= L) { resolve(); return; }
+      renderLoopFrame(ctx, w, h, t, L, fade);
+      push();
+      progress(t / L);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+  await new Promise(r => setTimeout(r, 120));
+  recorder.stop();
+  await done;
+  stream.getTracks().forEach(tr => tr.stop());
+  canvas.remove();
+  if (wpVideoJob.cancelled) return 'cancelled';
+  return new Blob(chunks, { type: type.split(';')[0] });
+}
+async function exportWallpaperVideo() {
+  if (wpVideoJob) return;
+  const size = resolveExportSize(wallpaperResolutionSelect);
+  if (!size) return;
+  // Encoders want even sizes; the long side is capped at 1920 so phones
+  // can keep up and every player can decode it.
+  const k = Math.min(1, 1920 / Math.max(size.w, size.h));
+  const w = Math.max(2, Math.round((size.w * k) / 2) * 2), h = Math.max(2, Math.round((size.h * k) / 2) * 2);
+  const L = wallpaperState.videoSeconds || 10;
+  const fade = Math.min(2, L * 0.25);
+  const overlay = document.getElementById('videoProgressOverlay');
+  const bar = document.getElementById('videoProgressBar');
+  const label = document.getElementById('videoProgressLabel');
+  const progress = (f) => { bar.style.width = `${Math.round(f * 100)}%`; };
+  label.textContent = `Making a ${L}s live wallpaper (${w}×${h})…`;
+  progress(0);
+  overlay.hidden = false;
+  wpVideoJob = { cancelled: false, recorder: null };
+  const wasLive = wallpaperState.live;
+  stopWallpaperAnimation();
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  let blob = null;
+  try {
+    blob = await encodeWithWebCodecs(canvas, ctx, w, h, L, fade, 30, progress);
+    if (!blob) {
+      label.textContent = `Recording ${L}s at ${w}×${h}… keep Gradii open`;
+      blob = await encodeWithRecorder(canvas, ctx, w, h, L, fade, progress);
+    }
+    if (!blob) showToast('This browser can’t make videos — try Chrome or Safari');
+    else if (blob === 'cancelled') showToast('Cancelled');
+    else {
+      const ext = blob.type === 'video/mp4' ? 'mp4' : 'webm';
+      saveFile(blob, `gradii-live-${w}x${h}-${L}s.${ext}`, blob.type);
+      showToast(`Live wallpaper saved (${L}s ${ext.toUpperCase()}, seamless loop)`);
+      haptic([10, 60, 10]);
+    }
+  } catch (err) {
+    if (wpVideoJob.recorder && wpVideoJob.recorder.state !== 'inactive') { try { wpVideoJob.recorder.stop(); } catch (e) { /* ignore */ } }
+    showToast('Video failed: ' + (err && err.message ? err.message : 'unknown error'));
+  } finally {
+    canvas.remove();
+    wpVideoJob = null;
+    overlay.hidden = true;
+    if (wasLive && activeTab === 'wallpaper') startWallpaperAnimation();
+  }
+}
+document.getElementById('btnExportWallpaperVideo').addEventListener('click', exportWallpaperVideo);
+document.getElementById('btnCancelVideo').addEventListener('click', () => { if (wpVideoJob) wpVideoJob.cancelled = true; });
+
+/* ---- more exports (Pro): batch zip, multi-monitor ---- */
+document.getElementById('btnBatchExportWallpaper').addEventListener('click', async () => {
+  if (!isProUnlocked()) { showToast('Batch export is a Pro feature — unlock for ₹39'); openProModal(); return; }
+  if (typeof JSZip === 'undefined') { showToast('Zip library failed to load — try again online'); return; }
+  const size = resolveExportSize(wallpaperResolutionSelect);
+  if (!size) return;
+  const count = clamp(Number(document.getElementById('wallpaperBatchCount').value) || 6, 2, 12);
+  showToast(`Generating ${count} variations…`);
+  const original = JSON.parse(JSON.stringify(wallpaperState));
+  const zip = new JSZip();
+  suppressRecentGenerated = true;
+  for (let i = 0; i < count; i++) {
+    randomizeWallpaperColorsOnly();
+    newWallpaperSeed();
+    const canvas = renderWallpaperExport(size.w, size.h, wallpaperFrozenT, wpAmoledOn());
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    zip.file(`wallpaper-${wallpaperState.seed}.png`, blob);
+  }
+  suppressRecentGenerated = false;
+  wallpaperState = original;
+  applyWallpaperStateToUI();
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  saveFile(zipBlob, 'gradii-wallpapers.zip', 'application/zip');
+  showToast(`${count} wallpapers zipped and downloaded`);
+});
+document.getElementById('btnMultiMonitorExport').addEventListener('click', () => {
+  if (!isProUnlocked()) { showToast('Multi-monitor export is a Pro feature — unlock for ₹39'); openProModal(); return; }
+  const monitors = Number(document.getElementById('wallpaperMonitorCount').value) || 2;
+  const w = 1920 * monitors, h = 1080;
+  downloadCanvasPng(renderWallpaperExport(w, h, wallpaperFrozenT, wpAmoledOn()), `wallpaper-${monitors}monitor-${w}x${h}.png`);
+  showToast(`${monitors}-monitor wallpaper downloaded — set your display mode to "Span"`);
+});
+
+function initWallpaperStudio() {
+  if (!wallpaperState.seed) newWallpaperSeed();
+  renderWallpaperStyleCats();
+  renderWallpaperStyleGrid();
+  renderWallpaperLooks();
+  renderWallpaperPaletteOptions();
+  wallpaperOnOpenSelect.value = isProUnlocked() ? getWallpaperOnOpen() : 'off';
+  syncWallpaperVideoUI();
+  applyWallpaperStateToUI();
+  const onOpen = wallpaperOnOpenSelect.value;
+  if (onOpen === 'daily') applyWallpaperOfTheDay();
+  else if (onOpen === 'seasonal') applySeasonalWallpaperStyle();
 }
 
 /* ==========================================================================
@@ -4279,6 +5278,13 @@ function openFullscreenPreview(kind) {
     else drawWallpaperFrame(wallpaperFrozenT);
   }
 
+  fullscreenContent.querySelectorAll('canvas.fx-layer').forEach(c => c.remove());
+  if ((kind === 'gradient' && studioFxActive(gradientState.fx)) || (kind === 'mesh' && studioFxActive(meshState.fx))) {
+    const c = document.createElement('canvas');
+    c.className = 'fx-layer';
+    fullscreenContent.prepend(c);
+    requestAnimationFrame(() => paintStudioFx(kind, c, fullscreenContent));
+  }
   fullscreenOverlay.dataset.kind = kind;
   fullscreenOverlay.classList.add('open');
 }
@@ -4585,15 +5591,8 @@ function loadStateFromUrl() {
     renderMeshPreview();
     setActiveTab('mesh');
   } else if (tab === 'wallpaper' && state.pattern && state.colors) {
-    wallpaperState = state;
-    wallpaperState.pattern = sanitizeWallpaperPattern(wallpaperState.pattern);
-    wallpaperPatternSelect.value = wallpaperState.pattern;
-    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
-    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
-    syncWallpaperAdvancedFeatureUI();
-    wallpaperModeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', (b.dataset.mode === 'live') === wallpaperState.live));
-    btnWallpaperNewFrame.hidden = wallpaperState.live;
-    renderWallpaperColorsList();
+    wallpaperState = normalizeWallpaperState(Object.assign({ live: true }, state));
+    applyWallpaperStateToUI();
     setActiveTab('wallpaper');
     activateWallpaperTab();
   }
@@ -4841,10 +5840,6 @@ document.getElementById('gradientOklchToggle').addEventListener('change', (e) =>
   renderGradientPreview();
 });
 
-document.getElementById('gradientDitherToggle').addEventListener('change', (e) => {
-  gradientState.dither = e.target.checked;
-});
-
 const gradientTempSlider = document.getElementById('gradientTempSlider');
 const gradientTempValue = document.getElementById('gradientTempValue');
 gradientTempSlider.addEventListener('input', () => {
@@ -5070,15 +6065,10 @@ const wallpaperHistory = createStudioHistory(
   '.wallpaper-studio',
   () => wallpaperState,
   (s) => {
-    wallpaperState = s;
-    wallpaperPatternSelect.value = wallpaperState.pattern;
-    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
-    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
-    renderWallpaperColorsList();
-    syncWallpaperEffectsUI();
-    syncWallpaperSeedUI();
+    wallpaperState = normalizeWallpaperState(s);
+    applyWallpaperStateToUI();
   },
-  () => { if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT); }
+  () => refreshWallpaper()
 );
 
 document.addEventListener('keydown', (e) => {
@@ -5144,16 +6134,8 @@ function restoreRecentGenerated(i) {
     renderMeshBlobsList();
     renderMeshPreview();
   } else if (entry.tab === 'wallpaper') {
-    wallpaperState = state;
-    wallpaperState.pattern = sanitizeWallpaperPattern(wallpaperState.pattern);
-    wallpaperPatternSelect.value = wallpaperState.pattern;
-    wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
-    wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
-    syncWallpaperAdvancedFeatureUI();
-    renderWallpaperColorsList();
-    syncWallpaperEffectsUI();
-    syncWallpaperSeedUI();
-    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+    wallpaperState = normalizeWallpaperState(state);
+    applyWallpaperStateToUI();
   }
   setActiveTab(entry.tab);
   showToast('Restored from recent');
@@ -5188,22 +6170,14 @@ function loadProject(index) {
   gradientState = p.gradient;
   paletteState = p.palette;
   meshState = p.mesh;
-  wallpaperState = p.wallpaper;
-  wallpaperState.pattern = sanitizeWallpaperPattern(wallpaperState.pattern);
+  wallpaperState = normalizeWallpaperState(p.wallpaper);
   syncGradientControlsFromState();
   renderStopsList();
   renderGradientPreview();
   renderPaletteSwatches();
   renderMeshBlobsList();
   renderMeshPreview();
-  wallpaperPatternSelect.value = wallpaperState.pattern;
-  wallpaperSpeedSlider.value = Math.round(wallpaperState.speed * 10);
-  wallpaperSpeedValue.textContent = `${wallpaperState.speed.toFixed(1)}×`;
-  syncWallpaperAdvancedFeatureUI();
-  renderWallpaperColorsList();
-  syncWallpaperEffectsUI();
-  syncWallpaperSeedUI();
-  if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+  applyWallpaperStateToUI();
   showToast(`Loaded project "${p.name}"`);
 }
 
@@ -5650,7 +6624,7 @@ function init() {
     gradientState.stops = Array.from({ length: count }, (_, i) => ({ color: '#000000', pos: Math.round((i / (count - 1)) * 100) }));
     randomizeGradient();
     randomizeWallpaperColors();
-    meshState.baseColor = hslToHex(Math.random() * 360, 40, 12);
+    meshState.baseColor = wpBackgroundFor('auto', Math.random() * 360);
   } finally { bootRandomizing = false; }
   syncGradientControlsFromState();
   renderStopsList();
@@ -5670,34 +6644,8 @@ function init() {
   renderMeshPresets();
   renderMeshPreview();
 
-  renderWallpaperColorsList();
-  renderWallpaperPresets();
-  renderWallpaperChaptersList();
+  initWallpaperStudio();
   updateWallpaperResolutionHint();
-
-  let advancedOn = false;
-  try { advancedOn = isProUnlocked() && localStorage.getItem('gradii_wallpaper_advanced') === '1'; } catch (e) { /* ignore */ }
-  wallpaperAdvancedToggle.checked = advancedOn;
-  syncWallpaperAdvancedUI();
-
-  let seasonalOn = false, dayOn = false, chaptersAutoOn = false;
-  try {
-    seasonalOn = localStorage.getItem('gradii_wallpaper_seasonal') === '1';
-    dayOn = localStorage.getItem('gradii_wallpaper_of_the_day') === '1';
-    chaptersAutoOn = localStorage.getItem('gradii_wallpaper_chapters_auto') === '1';
-  } catch (e) { /* ignore */ }
-  document.getElementById('wallpaperSeasonalRotation').checked = seasonalOn;
-  document.getElementById('wallpaperOfTheDay').checked = dayOn;
-  wallpaperChaptersAutoToggle.checked = chaptersAutoOn;
-  // Least to most specific, each overriding the last: a day-of-year pick,
-  // then a season-matched look, then Chapters' own deliberately-configured
-  // time window — see the hint text next to each toggle.
-  if (dayOn && isWallpaperAdvancedUnlocked()) applyWallpaperOfTheDay();
-  if (seasonalOn && isWallpaperAdvancedUnlocked()) applySeasonalWallpaperStyle();
-  if (chaptersAutoOn) {
-    const active = findActiveChapter(loadWallpaperChapters());
-    if (active) applyWallpaperChapter(active);
-  }
 
   loadStateFromUrl();
 
@@ -6068,9 +7016,9 @@ function mixHex(a, b, t) {
   return rgbToHex(A.r + (B.r - A.r) * t, A.g + (B.g - A.g) * t, A.b + (B.b - A.b) * t);
 }
 function renderDesignInto(ctx, w, h) {
-  if (mockupStudio === 'gradient') drawGradientToCanvas(ctx, w, h, gradientState);
-  else if (mockupStudio === 'mesh') drawMeshToCanvas(ctx, w, h, meshState);
-  else wpDrawFrame(wallpaperState.pattern, ctx, w, h, wallpaperFrozenT, wallpaperState.colors, wallpaperState.speed, wallpaperState.effects, wallpaperState.timeOfDayTint);
+  if (mockupStudio === 'gradient') { drawGradientToCanvas(ctx, w, h, gradientState); wpApplyEffects(ctx, w, h, gradientState.fx, 0); }
+  else if (mockupStudio === 'mesh') { drawMeshToCanvas(ctx, w, h, meshState); wpApplyEffects(ctx, w, h, meshState.fx, 0); }
+  else wpRenderScene(ctx, w, h, wallpaperFrozenT, wallpaperState, { bufKey: 'mockup' });
 }
 function drawMockup() {
   const W = mockupCanvas.width, H = mockupCanvas.height;
@@ -6333,13 +7281,14 @@ function applyMoodTo(studio, mood) {
   } else if (studio === 'mesh') {
     const cols = moodColors(mood, 5);
     meshState.points = randomMeshPoints(5, meshState.family).map((p, i) => ({ ...p, color: cols[i] }));
-    meshState.baseColor = mixHex(cols[0], '#000000', 0.55);
+    meshState.baseColor = Math.random() < 0.5 ? mixHex(cols[0], '#000000', 0.55) : mixHex(cols[0], '#ffffff', 0.85);
     renderMeshBlobsList(); renderMeshPreview();
   } else if (studio === 'wallpaper') {
     const cols = moodColors(mood, 3);
-    wallpaperState.colors = [mixHex(cols[0], '#000000', 0.8), ...cols];
+    wallpaperState.colors = [wpBackgroundFor(wallpaperState.bgMode, hexToHsl(cols[0]).h), ...cols];
+    wallpaperState.locked = wallpaperState.colors.map(() => false);
     renderWallpaperColorsList();
-    if (!wallpaperState.live) drawWallpaperFrame(wallpaperFrozenT);
+    refreshWallpaper();
   }
   if (typeof updateAuroraBackdrop === 'function') updateAuroraBackdrop();
 }
@@ -6443,6 +7392,10 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !guideEl
   { icon: '▯', label: 'Show on a device (mockup)', action: () => {
     if (['gradient', 'mesh', 'wallpaper'].includes(activeTab)) openMockup(activeTab); else showToast('Mockups work in Gradient, Mesh and Wallpaper');
   } },
+  { icon: '🎬', label: 'Save live wallpaper video', action: () => { setActiveTab('wallpaper'); exportWallpaperVideo(); } },
+  { icon: '★', label: 'Save this wallpaper look', action: () => { setActiveTab('wallpaper'); document.getElementById('btnSaveWallpaperLook').click(); } },
+  { icon: '🎲', label: 'Wallpaper: new colors only', action: () => { setActiveTab('wallpaper'); randomizeWallpaper('colors'); } },
+  { icon: '🎲', label: 'Wallpaper: new layout only', action: () => { setActiveTab('wallpaper'); randomizeWallpaper('layout'); } },
   { icon: '✦', label: 'Guided start (3 steps)', action: () => startGuidedFirstRun(true) },
   { icon: '❓', label: 'Feature tour', action: () => startOnboardingTour(true) },
   { icon: '▤', label: 'New palette collection', action: () => { setActiveTab('palette'); setTimeout(() => { const add = document.querySelector('#collectionBar .collection-chip:last-child'); if (add) { add.scrollIntoView({ block: 'center' }); add.click(); } }, 250); } },

@@ -191,3 +191,35 @@ avoids Maven Central 429 rate-limiting), then `apksigner verify
 seeded from `crypto.getRandomValues` — the Android WebView was repeating
 the same sequence on every cold start (same colors every launch). Keep
 new random code on `Math.random`; it's already covered.
+
+## Canvas effects must work in Safari (iPad/iPhone)
+
+`CanvasRenderingContext2D.filter` (`ctx.filter = 'blur(...)'`) is ignored
+by Safari, which is why blurs/glows used to be wrong on iPad. Shared
+effects (`wpBlurred`, `wpGlow`, `wpGrain`, glass: `wpGlassPanes`,
+`wpFlutedGlass`, `wpLiquidDrops`, `wpPrismBeams`) blur by downscale +
+upscale through reusable offscreen buffers (`wpBuf`) instead. Don't add
+new `ctx.filter` uses. Also clamp `drawImage` source rects to the image
+(`wpDrawSub`) — older Safari draws nothing when a source rect overhangs.
+A near-transparent fill casts a near-invisible shadow: to shadow a glass
+shape, fill it opaque with the shadow on, then repaint its inside.
+
+## Wallpaper styles and the live-wallpaper video
+
+Styles live in the `WP_STYLES` registry: each is a pure function of
+`(ctx, w, h, T, colors, p, rnd)` — `T` is seconds × speed, `p` the 0–1
+knobs, `rnd` a hash seeded by the layout seed — so any frame can be
+re-rendered at any size and time. `colors[0]` is always the background;
+glowing styles blend with `wpGlowOp(bg)` (screen on dark, multiply on
+light) so they don't wash out on light backgrounds.
+
+The "Live" export is a video, not an HTML file. Preferred path: WebCodecs
+`VideoEncoder` + `mp4-muxer` (jsDelivr, loaded on first use), rendering
+each frame at an exact 1/30 s step — smooth on any device. Fallback:
+`MediaRecorder` in real time (the capture canvas must be in the
+document, or Chromium only records the first frame). The loop is always
+seamless: the last stretch crossfades into frames from just before t=0,
+so the final frame leads straight into the first. Headless test Chromium
+has no H.264 encoder; the code falls back to VP9-in-MP4 there, and the
+service worker must be blocked (`serviceWorkers: 'block'`) for Playwright
+`page.route` to intercept the muxer script.
