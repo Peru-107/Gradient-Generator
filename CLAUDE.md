@@ -223,3 +223,21 @@ so the final frame leads straight into the first. Headless test Chromium
 has no H.264 encoder; the code falls back to VP9-in-MP4 there, and the
 service worker must be blocked (`serviceWorkers: 'block'`) for Playwright
 `page.route` to intercept the muxer script.
+
+## Movable objects and the Effects panel
+
+Panes, bubbles, orbs, color blobs, ink clouds, bokeh and sparkles are
+"objects" (`WP_OBJ_KINDS`, `wpGenObjects`). Styles and effects draw them
+through `wpObjects(env, kind, n, size)`: the seeded default layout unless
+`wallpaperState.objects[kind]` holds an edited list. The editor (✥ on the
+wallpaper preview) materializes the kinds on screen, then edits that list;
+`pin` stops an object drifting (`wpObjAt`). Layout shuffles reset
+`objects` to null. While editing, `wpFreezeObjects` draws everything on its
+anchor so the outlines line up. The editor toolbar and add menu live at
+body level (a transformed or backdrop-filtered ancestor breaks
+`position: fixed`), docked above the tab bar on phones.
+
+Effects for all three studios come from one list, `FX_CHIPS`, rendered as
+chips by `syncFxPanel(studio)`; state is `gradientState.fx`,
+`meshState.fx` and `wallpaperState.effects`, all shaped like
+`WP_FX_DEFAULT`, applied by `wpApplyEffects(ctx, w, h, fx, t, env)`.

@@ -153,6 +153,14 @@ Chosen from an interactive preview of four directions; all four shipped as theme
 92. ✅ **Done** — **Glass, grain, vignette and glow for Gradient and Mesh**.
 93. 🗑 **Removed** — Live HTML File, audio-reactive, battery low-power mode, loop toggle, Advanced Mode switch, Chapters, Recipe files, separate seasonal/day toggles (now one "On open" choice).
 
+## Phase 8 — Effects and movable objects
+
+94. ✅ **Done** — **Live wallpaper at full screen resolution and 60 fps** (was capped at 1920 px and 30 fps).
+95. ✅ **Done** — **Smoother curves** at high resolution (Silk, Paper Layers, Aurora, Wave Bands).
+96. ✅ **Done** — **New effects in all studios**: bokeh, sparkles, light leak, lens flare, rain on glass, textures (paper, halftone, scanlines, holographic) — as chips next to glass, glow, grain, vignette, duotone.
+97. ✅ **Done** — **Better glass**: panes with bevel, frost and sheen; bubbles with magnification, caustic and specular highlight; quantity sliders. Prism Light removed.
+98. ✅ **Done** — **Move objects** (✥ on the wallpaper preview): drag, resize, rotate, pinch, add, duplicate, delete, reset; pin to stop an object drifting in the live wallpaper.
+
 ## The big one
 
 49. **Community gallery** (Supabase-backed) — browse, like, and remix other users' saved designs. The one feature here that's a real backend build, not a static-app addition — deliberately sequenced after everything else, per earlier discussion.
