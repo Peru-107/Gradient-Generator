@@ -625,7 +625,7 @@ button, .btn, .seg-btn, .tab-btn, .icon-btn, .swatch, .preset-swatch,
 /* ---------------- gradient studio ---------------- */
 .gradient-studio {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 22px;
   align-items: start;
 }
@@ -1347,7 +1347,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 .fullscreen-close:hover { background: rgba(255, 255, 255, 0.28); }
 
 /* ---------------- mesh studio ---------------- */
-.mesh-studio { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; align-items: start; }
+.mesh-studio { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; align-items: start; }
 .mesh-preview { position: relative; }
 
 /* Draggable handle for a mesh blob, positioned at the blob's x%/y% inside
@@ -1445,7 +1445,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 .mesh-blob-remove:hover { background: #ff5c72; color: #fff; }
 
 /* ---------------- wallpaper studio ---------------- */
-.wallpaper-studio { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; align-items: start; }
+.wallpaper-studio { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; align-items: start; }
 
 .wallpaper-canvas {
   width: 100%;
@@ -1548,8 +1548,8 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 }
 
 /* ---------------- responsive ---------------- */
-@media (max-width: 900px) {
-  .gradient-studio, .mesh-studio, .wallpaper-studio { grid-template-columns: 1fr; }
+@media (max-width: 899px) {
+  .gradient-studio, .mesh-studio, .wallpaper-studio { grid-template-columns: minmax(0, 1fr); }
 
   /* Unwrap .preview-col so its children can be reordered independently:
      preview image first, then the settings (controls-col), then the
@@ -1570,15 +1570,10 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 @media (max-width: 640px) {
   .app { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
 
-  .topbar { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px 10px; }
-  .tabs { justify-content: flex-start; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; min-width: 0; max-width: 100%; }
-  .tabs::-webkit-scrollbar { display: none; }
-  .tab-btn { padding: 10px 16px; font-size: 0.86rem; min-height: 40px; flex-shrink: 0; }
-  /* All five items here are now equal-width icon buttons (the vision
-     picker used to be a wide native <select>, which is what forced the
-     wrap this rule used to allow) — everything fits on one row down to
-     very small phone widths, so wrapping is no longer needed at all. */
-  .topbar-actions { justify-content: center; flex-wrap: nowrap; gap: 6px; }
+  /* Studios moved to the bottom tab bar (.bottom-nav), so the topbar is a
+     single row: brand on the left, icon actions on the right. */
+  .topbar { flex-wrap: nowrap; gap: 8px; padding: 10px 10px 10px 14px; margin-top: 10px; }
+  .topbar-actions { flex-wrap: nowrap; gap: 4px; }
 
   .btn { min-height: 44px; padding: 11px 16px; font-size: 0.86rem; }
   .btn-sm { min-height: 36px; padding: 8px 14px; }
@@ -1696,3 +1691,631 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 .onboarding-card h3 { margin: 0 0 6px; font-size: 1.02rem; }
 .onboarding-card p:not(.onboarding-step-count) { margin: 0; font-size: 0.86rem; color: var(--text-muted); line-height: 1.45; }
 .onboarding-actions { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+
+/* ==========================================================================
+   2026 redesign — four "direction" themes
+   ----------------------------------------------------------------
+   Darkroom / Paint Chip / Prism / Spec Sheet were the four directions
+   previewed before the redesign; all four ship as real themes. Each is a
+   token set first (so every existing component re-skins for free) and a
+   short list of signature rules second — the one or two details that make
+   each look recognisably itself. Fonts for each are loaded lazily from
+   app.js (ensureThemeFonts) only when that theme is picked, so nobody
+   pays for eight font families on first load. Each theme also carries a
+   copy voice (see VOICE in app.js).
+   ========================================================================== */
+
+[data-theme="darkroom"] {
+  --bg: #0c0c0e;
+  --bg-alt: #17171b;
+  --bg-soft: #212126;
+  --text: #f1ede6;
+  --text-muted: #8e8a83;
+  --border: #2a2a30;
+  --accent: #ffb02e;
+  --accent-2: #ffb02e;
+  --accent-3: #ffb02e;
+  --accent-ink: #1a1205;
+  --shadow: rgba(0, 0, 0, 0.55);
+  --radius-lg: 8px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --font-ui: 'Schibsted Grotesk', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+[data-theme="paintchip"] {
+  --bg: #f2f2ef;
+  --bg-alt: #ffffff;
+  --bg-soft: #eaeae6;
+  --text: #111114;
+  --text-muted: #62626a;
+  --border: #dcdcd6;
+  --accent: #111114;
+  --accent-2: #111114;
+  --accent-3: #c8321a;
+  --accent-ink: #ffffff;
+  --shadow: rgba(17, 17, 20, 0.08);
+  --radius-lg: 2px;
+  --radius-md: 2px;
+  --radius-sm: 2px;
+  --font-ui: 'Archivo', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+[data-theme="prism"] {
+  --bg: #f7f5fc;
+  --bg-alt: rgba(255, 255, 255, 0.78);
+  --bg-soft: #eeebf8;
+  --text: #1c1830;
+  --text-muted: #625e7a;
+  --border: #e3def2;
+  --accent: #6d5dfc;
+  --accent-2: #ff6b9d;
+  --accent-3: #22d3c5;
+  --accent-ink: #ffffff;
+  --shadow: rgba(60, 40, 140, 0.10);
+  --radius-lg: 28px;
+  --radius-md: 22px;
+  --radius-sm: 14px;
+  --font-ui: 'Bricolage Grotesque', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+[data-theme="specsheet"] {
+  --bg: #eeeeea;
+  --bg-alt: #fafaf8;
+  --bg-soft: #e4e4df;
+  --text: #101012;
+  --text-muted: #5f5f64;
+  --border: #d0d0ca;
+  --accent: #101012;
+  --accent-2: #101012;
+  --accent-3: #101012;
+  --accent-ink: #fafaf8;
+  --shadow: transparent;
+  --radius-lg: 0px;
+  --radius-md: 0px;
+  --radius-sm: 0px;
+  --font-ui: 'Instrument Sans', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Instrument Sans', ui-monospace, Menlo, monospace;
+  --font-label: 'Instrument Serif', Georgia, serif;
+  color-scheme: light;
+}
+
+/* Themes whose chrome is deliberately colorless hide the brand orbs: the
+   artwork should be the only color on screen. Prism keeps them, softly. */
+[data-theme="darkroom"] .bg-orbs,
+[data-theme="paintchip"] .bg-orbs,
+[data-theme="specsheet"] .bg-orbs { display: none; }
+[data-theme="prism"] .orb { opacity: 0.22; filter: blur(90px); }
+
+/* Solid-accent primaries: these themes' accent isn't a two-color brand
+   gradient, and the label needs the theme's own ink for contrast (amber
+   takes near-black text; black takes white). */
+[data-theme="darkroom"] .btn-primary,
+[data-theme="paintchip"] .btn-primary,
+[data-theme="specsheet"] .btn-primary,
+[data-theme="darkroom"] .tab-btn.active,
+[data-theme="paintchip"] .tab-btn.active,
+[data-theme="specsheet"] .tab-btn.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+[data-theme="darkroom"] .slider,
+[data-theme="paintchip"] .slider,
+[data-theme="specsheet"] .slider { background: var(--bg-soft); box-shadow: inset 0 0 0 1px var(--border); }
+
+/* ---- Darkroom: amber safelight, mono numbers, crop marks ---- */
+[data-theme="darkroom"] .control-label,
+[data-theme="darkroom"] .btn,
+[data-theme="darkroom"] .tab-btn,
+[data-theme="darkroom"] .nav-btn span {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.74rem;
+}
+[data-theme="darkroom"] .control-card,
+[data-theme="darkroom"] .topbar,
+[data-theme="darkroom"] .tabs { box-shadow: none; }
+[data-theme="darkroom"] .preview-frame {
+  box-shadow: none;
+  background:
+    linear-gradient(var(--accent), var(--accent)) left top / 14px 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) left top / 1px 14px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right top / 14px 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right top / 1px 14px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) left bottom / 14px 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) left bottom / 1px 14px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right bottom / 14px 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right bottom / 1px 14px no-repeat,
+    var(--bg-alt);
+}
+[data-theme="darkroom"] .toast { background: var(--text); color: var(--bg); border-radius: 6px; font-family: var(--font-mono); }
+
+/* ---- Paint Chip: square, condensed, colors as named cards ---- */
+[data-theme="paintchip"] .control-label,
+[data-theme="paintchip"] .btn,
+[data-theme="paintchip"] .tab-btn,
+[data-theme="paintchip"] .brand-name {
+  font-stretch: 85%;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+[data-theme="paintchip"] .control-card,
+[data-theme="paintchip"] .preview-frame,
+[data-theme="paintchip"] .topbar,
+[data-theme="paintchip"] .tabs { box-shadow: none; }
+[data-theme="paintchip"] .btn-primary { background: var(--accent-3); color: #fff; }
+[data-theme="paintchip"] .swatch { padding-bottom: 0; box-shadow: 0 1px 0 var(--border), 0 0 0 1px var(--border); }
+[data-theme="paintchip"] .swatch-info {
+  background: #fff;
+  color: #111114;
+  margin: 0 -14px;
+  padding: 12px 14px 14px;
+}
+[data-theme="paintchip"] .swatch-color-input { border-color: var(--border); }
+[data-theme="paintchip"] .color-name { font-stretch: 85%; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.86rem; opacity: 1; }
+[data-theme="paintchip"] .saved-item .chip { border-radius: 0; }
+
+/* ---- Prism: frosted glass, round shapes, a primary that wears your colors ---- */
+[data-theme="prism"] .control-card,
+[data-theme="prism"] .preview-frame,
+[data-theme="prism"] .topbar,
+[data-theme="prism"] .tabs,
+[data-theme="prism"] .bottom-nav,
+[data-theme="prism"] .dropdown-menu {
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+[data-theme="prism"] .btn { border-radius: 999px; }
+[data-theme="prism"] .btn-primary,
+[data-theme="prism"] .tab-btn.active,
+[data-theme="prism"] .nav-btn.active::before {
+  background: linear-gradient(120deg, var(--wear-1, var(--accent)), var(--wear-2, var(--accent-2)));
+}
+[data-theme="prism"] .btn-primary { color: var(--wear-ink, #fff); transition: background 0.5s ease, transform 0.15s ease, box-shadow 0.15s ease; }
+[data-theme="prism"] .control-label { text-transform: none; letter-spacing: 0; font-size: 0.88rem; color: var(--text); }
+
+/* ---- Spec Sheet: monochrome grid, italic serif labels, hairlines ---- */
+[data-theme="specsheet"] body {
+  background-image:
+    linear-gradient(rgba(16, 16, 18, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 16, 18, 0.045) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+[data-theme="specsheet"] .control-label {
+  font-family: var(--font-label);
+  font-style: italic;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 1.02rem;
+  color: var(--text);
+}
+[data-theme="specsheet"] .control-card,
+[data-theme="specsheet"] .preview-frame,
+[data-theme="specsheet"] .topbar,
+[data-theme="specsheet"] .tabs,
+[data-theme="specsheet"] .swatch { box-shadow: none; }
+[data-theme="specsheet"] .control-value { font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+[data-theme="specsheet"] .segmented { border-radius: 0; box-shadow: inset 0 0 0 1px var(--border); background: transparent; }
+[data-theme="specsheet"] .seg-btn,
+[data-theme="specsheet"] .tab-btn { border-radius: 0; }
+[data-theme="specsheet"] .seg-btn.active { background: var(--text); color: var(--bg-alt); box-shadow: none; }
+[data-theme="specsheet"] .toast { border-radius: 0; }
+
+.theme-swatch-darkroom { background: linear-gradient(135deg, #0c0c0e 60%, #ffb02e 60%); }
+.theme-swatch-paintchip { background: linear-gradient(180deg, #c8321a 55%, #ffffff 55%); border-radius: 2px; }
+.theme-swatch-prism { background: conic-gradient(from 200deg, #6d5dfc, #ff6b9d, #22d3c5, #6d5dfc); }
+.theme-swatch-specsheet { background: #fafaf8; border-color: #101012; border-radius: 0; }
+.theme-menu-group { padding: 8px 12px 4px; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); }
+.theme-menu { max-height: min(72vh, 600px); overflow-y: auto; overscroll-behavior: contain; }
+
+/* ==========================================================================
+   2026 redesign — responsive shell
+   ----------------------------------------------------------------
+   Three device classes, not one layout squeezed three ways:
+   · phone   (<600px)     bottom tab bar in thumb reach, pinned preview
+                           ("stage") on top, settings scroll beneath it
+                           like a sheet; a grip resizes the stage.
+   · tablet  (600–1023px) left navigation rail; stage + inspector side by
+                           side from 900px (landscape), pinned stage over
+                           the inspector below that (portrait).
+   · desktop (≥1024px)    the original top tab strip + filmstrip + ⌘K.
+   Breakpoints follow Material's window size classes (compact <600,
+   medium 600–839, expanded 840+), rounded to where this app's own
+   two-column layout actually starts to fit.
+   ========================================================================== */
+.bottom-nav { display: none; }
+.sheet-grip { display: none; }
+.nav-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  position: relative;
+  isolation: isolate;
+  touch-action: manipulation;
+  transition: color 0.2s ease;
+}
+.nav-btn svg {
+  width: 24px; height: 24px;
+  fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform 0.25s cubic-bezier(.2, .9, .3, 1.3);
+}
+/* Active indicator: a pill behind the icon (Material 3 nav bar pattern) —
+   state carried by shape and color, not color alone. */
+.nav-btn::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 4px;
+  width: 56px; height: 32px;
+  left: 50%;
+  margin-left: -28px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleX(0.4);
+  transition: opacity 0.2s ease, transform 0.25s ease;
+}
+.nav-btn.active { color: var(--text); }
+.nav-btn.active::before { opacity: 0.18; transform: scaleX(1); }
+.nav-btn.active svg { transform: translateY(-1px) scale(1.06); }
+.nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 12px; }
+[data-theme="darkroom"] .nav-btn.active::before,
+[data-theme="paintchip"] .nav-btn.active::before,
+[data-theme="specsheet"] .nav-btn.active::before { opacity: 1; }
+[data-theme="darkroom"] .nav-btn.active svg,
+[data-theme="paintchip"] .nav-btn.active svg,
+[data-theme="specsheet"] .nav-btn.active svg { color: var(--accent-ink); }
+[data-theme="prism"] .nav-btn.active::before { opacity: 0.9; }
+[data-theme="prism"] .nav-btn.active svg { color: var(--wear-ink, #fff); }
+[data-theme="specsheet"] .nav-btn::before,
+[data-theme="paintchip"] .nav-btn::before { border-radius: 0; }
+
+@media (max-width: 1023px) {
+  .topbar .tabs { display: none; }
+  .bottom-nav { display: flex; background: var(--bg-alt); z-index: 60; }
+  [data-theme="aurora"] .bottom-nav,
+  [data-theme="prism"] .bottom-nav { backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); }
+  [data-theme="outline"] .bottom-nav { border-color: #fff !important; border-width: 2px !important; }
+}
+
+/* ---- phone: bottom tab bar ---- */
+@media (max-width: 599px) {
+  .bottom-nav {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    justify-content: space-around;
+    padding: 6px max(6px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+    border-top: 1px solid var(--border);
+  }
+  .nav-btn { flex: 1 1 0; min-width: 0; min-height: 56px; }
+  .app { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+  /* The bottom bar sits above the whole .app stacking context, so a long
+     dropdown must stop short of it instead of sliding underneath. */
+  .dropdown-menu { max-height: calc(100vh - 200px); max-height: calc(100dvh - 200px); overflow-y: auto; }
+  .brand-name { font-size: 1.15rem; }
+}
+@media (max-width: 599px) and (hover: none) {
+  /* No physical keyboard expected — the shortcuts editor is desktop-only
+     furniture; the ⌘ button still opens the command search. */
+  #btnEyedropperInfo { display: none; }
+}
+@media (max-width: 359px) {
+  .brand-mark { display: none; }
+  .icon-btn { width: 38px; height: 38px; }
+}
+
+/* ---- tablet: navigation rail ---- */
+@media (min-width: 600px) and (max-width: 1023px) {
+  .bottom-nav {
+    position: fixed;
+    top: 0; bottom: 0; left: 0;
+    width: calc(88px + env(safe-area-inset-left));
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    padding: env(safe-area-inset-top) 8px env(safe-area-inset-bottom) max(8px, env(safe-area-inset-left));
+    border-right: 1px solid var(--border);
+  }
+  .nav-btn { min-height: 64px; width: 100%; font-size: 0.72rem; }
+  .app {
+    margin-left: calc(88px + env(safe-area-inset-left));
+    padding-left: 20px;
+    padding-right: max(20px, env(safe-area-inset-right));
+  }
+}
+
+/* ---- single-column stage (phone + small tablet) ---- */
+@media (max-width: 899px) {
+  .preview-frame {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 5;
+  }
+  .gradient-studio .gradient-preview,
+  .mesh-studio .gradient-preview,
+  .wallpaper-canvas {
+    aspect-ratio: auto;
+    height: var(--stage-h, 38vh);
+    transition: height 0.28s cubic-bezier(.2, .8, .2, 1), background 0.15s ease;
+  }
+  .stage-resizing .gradient-preview,
+  .stage-resizing .wallpaper-canvas { transition: none; }
+  .preview-frame.has-grip { padding-bottom: 26px; }
+  .sheet-grip {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 26px;
+    border: none;
+    background: transparent;
+    cursor: ns-resize;
+    touch-action: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-muted);
+    font: 500 0.66rem var(--font-ui);
+  }
+  .sheet-grip::before {
+    content: '';
+    width: 40px; height: 5px;
+    border-radius: 999px;
+    background: var(--text-muted);
+    opacity: 0.55;
+    order: 1;
+  }
+  .sheet-grip .swipe-hint { order: 0; flex: 1 1 0; text-align: right; }
+  .sheet-grip .stage-size { order: 2; flex: 1 1 0; text-align: left; }
+  .sheet-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* Settings read as a sheet sliding under the stage. */
+  .controls-col { position: relative; z-index: 1; }
+
+  /* Palette on a phone: the colors are the stage (side by side, like the
+     palette really is), then the Generate action, then everything else. */
+  .palette-studio { display: flex; flex-direction: column; }
+  .palette-studio .palette-swatches#paletteSwatches { order: -2; flex-wrap: nowrap; gap: 6px; }
+  .palette-studio .palette-toolbar { order: -1; }
+  #paletteSwatches .swatch {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: min(46vh, 340px);
+    padding: 10px 4px;
+    align-items: center;
+  }
+  #paletteSwatches .swatch-top { flex-direction: column; gap: 6px; }
+  #paletteSwatches .swatch-info { align-items: center; }
+  #paletteSwatches .swatch-hex { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 0.86rem; }
+  #paletteSwatches .swatch-contrast { display: none; }
+  #paletteSwatches .swatch-info { flex-direction: row; align-items: flex-end; justify-content: center; flex-wrap: wrap; gap: 6px 2px; }
+  #paletteSwatches .swatch-info { min-height: 168px; align-content: flex-end; }
+  #paletteSwatches .swatch-color-input { flex-basis: 100%; max-width: 36px; }
+  #paletteSwatches .color-name { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 0.72rem; }
+  .palette-studio .palette-toolbar > .btn,
+  .palette-studio .palette-toolbar > .dropdown { flex: 1 1 calc(33.33% - 10px); min-width: 0; }
+  .palette-studio .palette-toolbar > #btnGeneratePalette { flex: 1 1 100%; }
+  .palette-studio .palette-toolbar > .toolbar-group { flex: 1 1 100%; }
+  [data-theme="paintchip"] #paletteSwatches .swatch-info { margin: 0 -4px; padding: 10px 4px 12px; width: calc(100% + 8px); }
+  #btnGeneratePalette { order: -1; flex: 1 1 100%; }
+}
+@media (pointer: fine) { .swipe-hint { display: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-btn svg, .nav-btn::before, .gradient-preview, .wallpaper-canvas { transition: none !important; }
+}
+
+/* ==========================================================================
+   2026 redesign — feature surfaces
+   ========================================================================== */
+
+/* Object-level actions live on the stage itself (fullscreen, compare,
+   mockup) instead of adding more buttons to the settings. */
+.stage-btn-2 { right: 62px; }
+.stage-btn-3 { right: 106px; }
+.compare-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink, #fff); }
+
+.color-name { font-size: 0.74rem; font-weight: 600; opacity: 0.85; line-height: 1.2; }
+
+/* ---- compare slider ---- */
+.compare-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.compare-divider {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 44px;
+  margin-left: -22px;
+  z-index: 3;
+  cursor: ew-resize;
+  touch-action: none;
+  display: flex;
+  justify-content: center;
+}
+.compare-divider::before { content: ''; width: 2px; height: 100%; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.25); }
+.compare-divider::after {
+  content: '⇆';
+  position: absolute;
+  top: 50%;
+  width: 34px; height: 34px;
+  margin-top: -17px;
+  border-radius: 50%;
+  background: #fff;
+  color: #111;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.95rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+.compare-tag {
+  position: absolute;
+  bottom: 10px;
+  z-index: 3;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font: 600 0.7rem var(--font-ui);
+  pointer-events: none;
+}
+.compare-tag-before { left: 10px; }
+.compare-tag-after { right: 10px; }
+
+/* ---- long-press color menu / collection menu ---- */
+.color-pop {
+  position: fixed;
+  z-index: 800;
+  min-width: 210px;
+  max-width: calc(100vw - 24px);
+  background: var(--bg-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 18px 50px rgba(0,0,0,0.3);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+}
+[data-theme="aurora"] .color-pop, [data-theme="prism"] .color-pop { background: var(--bg); }
+.color-pop-head { display: flex; gap: 10px; align-items: center; padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.color-pop-head i { width: 34px; height: 34px; border-radius: var(--radius-sm); flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1); }
+.color-pop-head div { display: flex; flex-direction: column; min-width: 0; }
+.color-pop-head span { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted); }
+.color-pop button {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: 500 0.9rem var(--font-ui);
+  padding: 12px 12px;
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.color-pop button:hover, .color-pop button:focus-visible { background: var(--bg-soft); outline: none; }
+.color-pop button.current { font-weight: 700; }
+.color-pop input { margin: 4px 6px 6px; }
+.color-pop-title { padding: 8px 12px 6px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.swatch.pressing { transform: scale(0.97); transition: transform 0.45s ease; }
+
+/* ---- collections ---- */
+.collection-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.collection-chip {
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text-muted);
+  font: 600 0.8rem var(--font-ui);
+  padding: 8px 14px;
+  min-height: 36px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.collection-chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.collection-chip .count { opacity: 0.6; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.collection-new-input { width: 170px; }
+[data-theme="paintchip"] .collection-chip,
+[data-theme="specsheet"] .collection-chip { border-radius: 0; }
+.saved-item .saved-move {
+  position: absolute;
+  top: 2px; right: 26px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+  font-size: 0.66rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.saved-item .saved-delete { width: 22px; height: 22px; }
+
+/* ---- device mockup ---- */
+.mockup-box { max-width: 640px; display: flex; flex-direction: column; gap: 12px; padding-bottom: 4px; }
+.mockup-seg { margin: 0 16px; }
+.mockup-canvas { width: calc(100% - 32px); margin: 0 16px; height: auto; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--bg-soft); }
+
+/* ---- guided first run ---- */
+.guide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(8, 8, 14, 0.55);
+  padding: 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  transition: background 0.3s ease;
+}
+.guide-overlay.result { background: transparent; pointer-events: none; }
+.guide-overlay.result .guide-card { pointer-events: auto; }
+@media (min-width: 600px) { .guide-overlay:not(.result) { align-items: center; } }
+.guide-card {
+  width: min(560px, 100%);
+  background: var(--bg-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 30px 80px -20px rgba(0,0,0,0.5);
+  padding: 20px 20px 16px;
+}
+[data-theme="aurora"] .guide-card, [data-theme="prism"] .guide-card { background: var(--bg); }
+.guide-progress { display: flex; gap: 6px; margin-bottom: 14px; }
+.guide-progress i { flex: 1; height: 4px; border-radius: 999px; background: var(--bg-soft); transition: background 0.3s ease; }
+.guide-progress i.done { background: var(--accent); }
+.guide-step { margin: 0 0 2px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 700; }
+.guide-title { margin: 0 0 14px; font-size: 1.35rem; letter-spacing: -0.01em; text-wrap: balance; }
+.guide-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 600px) { .guide-options.moods { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.guide-option {
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text);
+  border-radius: var(--radius-md);
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.guide-option:hover { transform: translateY(-2px); border-color: var(--text-muted); }
+.guide-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.guide-option i { display: block; height: 64px; }
+.guide-option b { display: block; padding: 10px 12px 2px; font-size: 0.92rem; }
+.guide-option small { display: block; padding: 0 12px 12px; color: var(--text-muted); font-size: 0.76rem; line-height: 1.35; }
+.guide-tips { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 0.88rem; color: var(--text-muted); }
+.guide-tips b { color: var(--text); }
+.guide-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .guide-option, .swatch.pressing, .guide-progress i { transition: none; }
+}
+[data-theme="prism"] .command-box { background: var(--bg); }
+/* Fitts's law: the one primary action per studio is never a small target,
+   at any width. */
+.btn-primary:not(.btn-sm) { min-height: 44px; }
+/* A long button label inside a narrow settings card wraps instead of
+   pushing past the card edge (seen with Paint Chip's wide uppercase
+   labels at 320px). */
+.control-card .btn { white-space: normal; max-width: 100%; }
