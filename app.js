@@ -96,11 +96,32 @@ function mixOklch(hexA, hexB, t) {
    Android/iOS to stretch or crop it to fit. Exporting at the device's own
    native pixel resolution (CSS size × devicePixelRatio) instead means the
    image is already the right shape for that screen — no scaling needed. */
+/* The screen size in CSS px, in the orientation the device is held *right
+   now*. iOS/iPadOS Safari always reports screen.width/height in portrait
+   (an iPad Pro 11" says 834×1194 even when turned sideways), so a
+   landscape iPad used to download a portrait image while the preview
+   showed landscape. On touch devices the app fills the screen, so the
+   viewport's own orientation is the device's orientation — use it to
+   decide which side is the long one. Desktop windows can be any shape
+   and don't rotate, so there screen.width/height are trusted as-is. */
+function getOrientedScreenSize() {
+  let sw = window.screen.width || window.innerWidth;
+  let sh = window.screen.height || window.innerHeight;
+  const touch = (navigator.maxTouchPoints || 0) > 0 || window.matchMedia('(any-pointer: coarse)').matches;
+  if (touch) {
+    const landscape = window.matchMedia('(orientation: landscape)').matches;
+    const long = Math.max(sw, sh), short = Math.min(sw, sh);
+    if (landscape) { sw = long; sh = short; } else { sw = short; sh = long; }
+  }
+  return { sw, sh };
+}
+
 function getDeviceExportSize(maxDim) {
   const cap = maxDim || 4096;
   const dpr = window.devicePixelRatio || 1;
-  let w = Math.round((window.screen.width || window.innerWidth) * dpr);
-  let h = Math.round((window.screen.height || window.innerHeight) * dpr);
+  const { sw, sh } = getOrientedScreenSize();
+  let w = Math.round(sw * dpr);
+  let h = Math.round(sh * dpr);
   const scale = Math.min(1, cap / Math.max(w, h));
   return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
 }
@@ -3159,7 +3180,8 @@ function updateWallpaperResolutionHint() {
   if (!hint) return;
   if (wallpaperResolutionSelect.value === 'auto') {
     const size = getDeviceExportSize();
-    hint.textContent = `→ ${size.w}×${size.h} (screen ${window.screen.width}×${window.screen.height}, pixel ratio ${window.devicePixelRatio || 1})`;
+    const { sw, sh } = getOrientedScreenSize();
+    hint.textContent = `→ ${size.w}×${size.h} (screen ${sw}×${sh}, pixel ratio ${window.devicePixelRatio || 1})`;
   } else {
     const [w, h] = wallpaperResolutionSelect.value.split('x');
     hint.textContent = `→ ${w}×${h}`;
