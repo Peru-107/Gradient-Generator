@@ -139,12 +139,7 @@
             <p class="hint">Avoids the muddy grey that plain gradients can pass through between two bright colors.</p>
           </div>
 
-          <div class="control-card">
-            <label class="control-label control-label-row"><span>Reduce banding</span>
-              <label class="oklch-switch"><input type="checkbox" id="gradientDitherToggle"><span></span></label>
-            </label>
-            <p class="hint">Adds a barely-visible fine texture to PNG downloads so smooth gradients don't show hard color steps.</p>
-          </div>
+          <div class="control-card fx-card" data-fx="gradient"></div>
 
           <div class="control-card">
             <label class="control-label control-label-row"><span>Temperature</span><span id="gradientTempValue" class="control-value">0</span></label>
@@ -345,6 +340,8 @@
             </div>
           </div>
 
+          <div class="control-card fx-card" data-fx="mesh"></div>
+
           <div class="control-card">
             <label class="control-label">Layout</label>
             <select id="meshFamilySelect" class="select">
@@ -399,132 +396,86 @@
           <div class="preview-frame">
             <canvas id="wallpaperCanvas" class="wallpaper-canvas"></canvas>
             <div class="safe-zone-overlay" id="wallpaperSafeZoneOverlay" hidden>
-              <div class="safe-zone-band safe-zone-clock"><span>Lock screen clock area</span></div>
-              <div class="safe-zone-band safe-zone-icons"><span>Icons / dock area</span></div>
+              <div class="safe-zone-band safe-zone-clock"><span>Clock</span></div>
+              <div class="safe-zone-band safe-zone-icons"><span>Icons</span></div>
             </div>
             <button class="fullscreen-btn" id="btnFullscreenWallpaper" title="Full screen preview" aria-label="Full screen preview">⤢</button>
             <button class="fullscreen-btn stage-btn-2 mockup-btn" data-mockup="wallpaper" title="Show on a device" aria-label="Show on a device"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 18.5h3" stroke-linecap="round"/></svg></button>
+          </div>
+
+          <div class="primary-action-row wp-primary-row">
+            <button id="btnRandomWallpaperColors" class="btn btn-primary">🎲 Randomize</button>
+            <button id="btnShuffleWallpaperColors" class="btn" title="New colors, same layout">Colors</button>
+            <button id="btnShuffleWallpaperLayout" class="btn" title="New layout, same colors">Layout</button>
           </div>
 
           <div class="export-block">
             <div class="preview-actions">
               <div class="segmented segmented-inline" id="wallpaperModeSeg">
                 <button data-mode="live" class="seg-btn active">▶ Live</button>
-                <button data-mode="static" class="seg-btn">⏸ Static</button>
+                <button data-mode="static" class="seg-btn">⏸ Still</button>
               </div>
-              <button id="btnWallpaperNewFrame" class="btn" hidden>🔀 New Frame</button>
+              <button id="btnWallpaperNewFrame" class="btn" hidden>🔀 New frame</button>
               <button id="btnShareWallpaper" class="btn">🔗 Share</button>
-              <button id="btnQrWallpaper" class="btn btn-sm qr-btn" title="Show QR code">▦</button>
+              <button id="btnQrWallpaper" class="btn btn-sm qr-btn" title="Show QR code" aria-label="Show QR code">▦</button>
             </div>
 
-            <div class="preview-actions">
-              <select id="wallpaperResolutionSelect" class="select">
-                <option value="auto" selected>📱 My Screen (recommended)</option>
+            <div class="wp-size-row">
+              <select id="wallpaperResolutionSelect" class="select" aria-label="Export size">
+                <option value="auto" selected>📱 My screen</option>
                 <option value="1170x2532">⭐ Phone (1170×2532)</option>
                 <option value="1920x1080">⭐ Desktop (1920×1080)</option>
-                <option value="3840x2160">⭐ 4K UHD (3840×2160)</option>
+                <option value="3840x2160">⭐ 4K (3840×2160)</option>
                 <option value="1080x1080">⭐ Square (1080×1080)</option>
-                <option value="1080x1920">⭐ Story / Reel (1080×1920)</option>
+                <option value="1080x1920">⭐ Story (1080×1920)</option>
                 <option value="2048x2732">⭐ Tablet (2048×2732)</option>
                 <option value="3440x1440">⭐ Ultrawide (3440×1440)</option>
-                <option value="7680x2160">⭐ Dual 4K Monitor (7680×2160)</option>
+                <option value="7680x2160">⭐ Dual 4K (7680×2160)</option>
               </select>
-              <span class="hint" id="wallpaperResolutionHint" style="margin:0; align-self:center;"></span>
-              <button id="btnDownloadWallpaperPng" class="btn">⬇ PNG</button>
-              <button id="btnCopyWallpaperImage" class="btn btn-sm" title="Copy image to clipboard">📋 Copy Image</button>
-              <button id="btnSetAsWallpaper" class="btn" hidden>🖼 Set as Wallpaper</button>
-              <button id="btnRecordWallpaper" class="btn">🎬 Record Video (6s)</button>
-              <button id="btnDownloadWallpaperHtml" class="btn">📄 Live HTML File</button>
+              <span class="control-value" id="wallpaperResolutionHint"></span>
             </div>
-            <label class="control-label control-label-row audio-reactive-row"><span>🎤 Audio-reactive (mic-powered pulse in exported HTML)</span>
-              <label class="oklch-switch"><input type="checkbox" id="wallpaperAudioReactive"><span></span></label>
-            </label>
-          </div>
 
-          <p class="hint">PNG exports at the selected resolution (⭐ = Pro). Video records a 6s loop at preview size. The HTML file is a self-contained, self-playing wallpaper you can point apps like Wallpaper Engine or Lively Wallpaper at.</p>
+            <div class="wp-save">
+              <div class="wp-save-row">
+                <span class="wp-save-label">Image</span>
+                <button id="btnDownloadWallpaperPng" class="btn">⬇ Save PNG</button>
+                <button id="btnCopyWallpaperImage" class="btn btn-sm" title="Copy image">📋</button>
+                <button id="btnSetAsWallpaper" class="btn" hidden>🖼 Set as wallpaper</button>
+              </div>
+              <div class="wp-save-row">
+                <span class="wp-save-label">Live</span>
+                <div class="segmented wp-length" id="wallpaperVideoLengthSeg" role="radiogroup" aria-label="Video length">
+                  <button class="seg-btn" data-seconds="5" role="radio">5s</button>
+                  <button class="seg-btn active" data-seconds="10" role="radio">10s</button>
+                  <button class="seg-btn" data-seconds="15" role="radio">15s ⭐</button>
+                  <button class="seg-btn" data-seconds="30" role="radio">30s ⭐</button>
+                </div>
+                <button id="btnExportWallpaperVideo" class="btn">🎬 Save video</button>
+              </div>
+              <p class="hint wp-save-hint">The video loops seamlessly — set it as a live wallpaper.</p>
+            </div>
+          </div>
         </div>
 
         <div class="controls-col">
-          <div class="control-card advanced-mode-card">
-            <label class="control-label control-label-row"><span>⚙ Advanced Mode</span>
-              <label class="oklch-switch"><input type="checkbox" id="wallpaperAdvancedToggle"><span></span></label>
-            </label>
-            <p class="hint" style="margin-top:-4px;">8 more live patterns, tap/shake interactions, and adaptive smart behavior (real sunrise/sunset, battery-aware, seasonal rotation, depth parallax). <strong>Pro.</strong></p>
+          <div class="control-card">
+            <div class="control-label-row"><label class="control-label">Style</label><span class="control-value" id="wallpaperStyleName"></span></div>
+            <div class="wp-cats" id="wallpaperStyleCats" role="toolbar" aria-label="Style categories"></div>
+            <div class="wp-style-grid" id="wallpaperStyleGrid"></div>
           </div>
 
           <div class="control-card">
-            <label class="control-label">Pattern</label>
-            <select id="wallpaperPatternSelect" class="select">
-              <option value="flowingMesh">Flowing Mesh</option>
-              <option value="auroraFlow">Aurora Flow</option>
-              <option value="radialPulse">Radial Pulse</option>
-              <option value="conicSpin">Conic Spin</option>
-              <option value="waveBands">Wave Bands</option>
-              <option value="starfield" class="pattern-advanced" hidden>✦ Starfield (Pro)</option>
-              <option value="plasma" class="pattern-advanced" hidden>✦ Plasma (Pro)</option>
-              <option value="ripple" class="pattern-advanced" hidden>✦ Ripple (Pro)</option>
-              <option value="voronoi" class="pattern-advanced" hidden>✦ Voronoi Cells (Pro)</option>
-              <option value="kaleidoscope" class="pattern-advanced" hidden>✦ Kaleidoscope (Pro)</option>
-              <option value="perlinClouds" class="pattern-advanced" hidden>✦ Cloud Drift (Pro)</option>
-              <option value="lavaLamp" class="pattern-advanced" hidden>✦ Lava Lamp (Pro)</option>
-              <option value="moire" class="pattern-advanced" hidden>✦ Moiré (Pro)</option>
-            </select>
-          </div>
-
-          <div id="wallpaperAdvancedSection" hidden>
-            <div class="control-card">
-              <label class="control-label">Touch &amp; motion interactions</label>
-              <p class="hint" style="margin-top:-4px;">These only do anything once the Live HTML File is opened somewhere that forwards real touch/sensor events (a live-wallpaper app, or the file on a phone browser) — not in this in-app preview.</p>
-              <label class="control-label control-label-row"><span>Tap-to-ripple</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperTapRipple"><span></span></label>
-              </label>
-              <label class="control-label control-label-row"><span>Shake-to-randomize</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperShakeRandomize"><span></span></label>
-              </label>
-              <label class="control-label control-label-row"><span>Double-tap to pause/resume</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperDoubleTapPause"><span></span></label>
-              </label>
+            <label class="control-label">Adjust</label>
+            <div class="wp-param">
+              <label class="control-label-row wp-param-label" for="wallpaperSpeedSlider"><span>Speed</span><span id="wallpaperSpeedValue" class="control-value">1.0×</span></label>
+              <input type="range" id="wallpaperSpeedSlider" min="2" max="30" value="10" class="slider">
             </div>
-
-            <div class="control-card">
-              <label class="control-label control-label-row"><span>Real sunrise/sunset (uses location)</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperRealSunTimes"><span></span></label>
-              </label>
-              <p class="hint">Upgrades the Time-of-day tint below from a fixed hour curve to your device's actual sunrise/sunset. Falls back to the fixed curve if location access is denied.</p>
+            <div id="wallpaperParamSliders"></div>
+            <div class="seed-row">
+              <span class="wp-save-label">Seed</span>
+              <input type="text" id="wallpaperSeedInput" class="text-input" placeholder="auto" aria-label="Layout seed" title="Type a seed and press Enter to get a layout back">
+              <button id="btnCopySeed" class="btn btn-sm" title="Copy seed" aria-label="Copy seed">📋</button>
             </div>
-
-            <div class="control-card">
-              <label class="control-label control-label-row"><span>Battery-aware low-power mode</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperBatteryAware"><span></span></label>
-              </label>
-              <p class="hint">Drops effects and frame rate below 20% battery. Only works where the browser reports battery level — silently does nothing elsewhere.</p>
-            </div>
-
-            <div class="control-card">
-              <label class="control-label control-label-row"><span>Depth-layered parallax</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperDepthParallax"><span></span></label>
-              </label>
-              <p class="hint">Adds a drifting dust layer above the pattern that tilts faster than it, for real depth instead of one flat tilted image. Needs Tilt parallax (above) turned on too.</p>
-            </div>
-
-            <div class="control-card">
-              <label class="control-label control-label-row"><span>Seasonal auto-style</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperSeasonalRotation"><span></span></label>
-              </label>
-              <p class="hint">Switches to a season-matched style pack automatically when you open the app (Spring/Summer/Autumn/Winter). Overridden by Chapters if that's also on.</p>
-            </div>
-
-            <div class="control-card">
-              <label class="control-label control-label-row"><span>Wallpaper of the day</span>
-                <label class="oklch-switch"><input type="checkbox" id="wallpaperOfTheDay"><span></span></label>
-              </label>
-              <p class="hint">Deterministically picks one style pack per calendar day — same look all day, a new one tomorrow.</p>
-            </div>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label">Speed <span id="wallpaperSpeedValue" class="control-value">1.0×</span></label>
-            <input type="range" id="wallpaperSpeedSlider" min="2" max="30" value="10" class="slider">
           </div>
 
           <div class="control-card">
@@ -533,127 +484,152 @@
               <button id="btnAddWallpaperColor" class="btn btn-sm">+ Add</button>
             </div>
             <div id="wallpaperColorsList" class="wallpaper-colors-list"></div>
-            <button id="btnRandomWallpaperColors" class="btn btn-primary wallpaper-randomize-btn">🎲 Randomize Colors</button>
-            <div class="seed-row">
-              <span class="hint" style="margin:0;">Seed</span>
-              <input type="text" id="wallpaperSeedInput" class="text-input" placeholder="auto" title="Type a seed and hit Enter to reproduce an exact set of random colors">
-              <button id="btnCopySeed" class="btn btn-sm" title="Copy this seed">📋</button>
+            <p class="hint">First color is the background. 🔒 keeps a color when shuffling.</p>
+            <div class="wp-field">
+              <span class="wp-save-label">Background</span>
+              <div class="segmented" id="wallpaperBgSeg" role="radiogroup" aria-label="Background">
+                <button class="seg-btn active" data-bg="auto" role="radio">Auto</button>
+                <button class="seg-btn" data-bg="dark" role="radio">Dark</button>
+                <button class="seg-btn" data-bg="light" role="radio">Light</button>
+                <button class="seg-btn" data-bg="colorful" role="radio">Color</button>
+              </div>
             </div>
-            <p class="hint">Randomize sets a new seed automatically — copy it to get back to this exact result later, or type one in and press Enter.</p>
+            <div class="wp-field">
+              <span class="wp-save-label">Harmony</span>
+              <select id="wallpaperHarmonySelect" class="select">
+                <option value="random">Random</option>
+                <option value="analogous">Analogous</option>
+                <option value="complementary">Complementary</option>
+                <option value="splitComplementary">Split complementary</option>
+                <option value="triadic">Triadic</option>
+                <option value="tetradic">Tetradic</option>
+                <option value="monochromatic">Monochrome</option>
+                <option value="cohesiveOklch">Smooth blend</option>
+              </select>
+            </div>
+            <div class="wp-field">
+              <select id="wallpaperFromPalette" class="select" aria-label="Use a saved palette"><option value="">Use a saved palette…</option></select>
+              <button id="btnExtractPaletteFromWallpaper" class="btn btn-sm" title="Send these colors to Palettes">🎨 To Palettes</button>
+            </div>
           </div>
 
           <div class="control-card">
             <label class="control-label">Effects</label>
-
-            <label class="control-label-row"><span>Grain <span id="wallpaperGrainValue" class="control-value">0%</span></span></label>
-            <input type="range" id="wallpaperGrainSlider" min="0" max="100" value="0" class="slider">
-            <p class="hint">A subtle film-grain texture, instead of a flat, glassy gradient.</p>
-
-            <label class="control-label-row"><span>Vignette <span id="wallpaperVignetteValue" class="control-value">0%</span></span></label>
-            <input type="range" id="wallpaperVignetteSlider" min="0" max="100" value="0" class="slider">
-
-            <label class="control-label-row"><span>Glow <span id="wallpaperGlowValue" class="control-value">0%</span></span></label>
-            <input type="range" id="wallpaperGlowSlider" min="0" max="100" value="0" class="slider">
-
-            <label class="control-label control-label-row"><span>Duotone (two-color tint)</span>
+            <div class="wp-field">
+              <span class="wp-save-label">Glass</span>
+              <select id="wallpaperGlassSelect" class="select">
+                <option value="none">None</option>
+                <option value="frosted">Frosted panes</option>
+                <option value="fluted">Fluted glass</option>
+                <option value="liquid">Liquid drops</option>
+                <option value="prism">Prism light</option>
+              </select>
+            </div>
+            <div class="wp-param">
+              <label class="control-label-row wp-param-label" for="wallpaperGrainSlider"><span>Grain</span><span id="wallpaperGrainValue" class="control-value">0%</span></label>
+              <input type="range" id="wallpaperGrainSlider" min="0" max="100" value="0" class="slider">
+            </div>
+            <div class="wp-param">
+              <label class="control-label-row wp-param-label" for="wallpaperVignetteSlider"><span>Vignette</span><span id="wallpaperVignetteValue" class="control-value">0%</span></label>
+              <input type="range" id="wallpaperVignetteSlider" min="0" max="100" value="0" class="slider">
+            </div>
+            <div class="wp-param">
+              <label class="control-label-row wp-param-label" for="wallpaperGlowSlider"><span>Glow</span><span id="wallpaperGlowValue" class="control-value">0%</span></label>
+              <input type="range" id="wallpaperGlowSlider" min="0" max="100" value="0" class="slider">
+            </div>
+            <label class="control-label-row wp-toggle"><span>Duotone</span>
               <label class="oklch-switch"><input type="checkbox" id="wallpaperDuotoneToggle"><span></span></label>
             </label>
             <div class="duotone-colors" id="wallpaperDuotoneColors" hidden>
-              <input type="color" id="wallpaperDuotoneShadow" value="#160f2e" aria-label="Duotone shadow color" title="Shadow color">
-              <input type="color" id="wallpaperDuotoneHighlight" value="#ff9ecf" aria-label="Duotone highlight color" title="Highlight color">
+              <input type="color" id="wallpaperDuotoneShadow" value="#160f2e" aria-label="Duotone shadow color" title="Shadows">
+              <input type="color" id="wallpaperDuotoneHighlight" value="#ff9ecf" aria-label="Duotone highlight color" title="Highlights">
             </div>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label">Style packs</label>
-            <p class="hint" style="margin-top:-4px;">One click sets the pattern, colors, and effects together — a full look, not just a palette.</p>
-            <div id="wallpaperPresetsGrid" class="presets-grid"></div>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label control-label-row"><span>Safe-zone preview</span>
-              <label class="oklch-switch"><input type="checkbox" id="wallpaperSafeZoneToggle"><span></span></label>
-            </label>
-            <p class="hint">Shows roughly where a lock screen's clock and icons usually sit, so your best detail isn't hidden under them. Preview only — never affects exports.</p>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label control-label-row"><span>True-black export (AMOLED)</span>
-              <label class="oklch-switch"><input type="checkbox" id="wallpaperAmoledToggle"><span></span></label>
-            </label>
-            <p class="hint">Crushes near-black shadows to pure black in PNG/wallpaper exports — saves real battery on OLED phone screens.</p>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label control-label-row"><span>Loop-perfect</span>
-              <label class="oklch-switch"><input type="checkbox" id="wallpaperLoopPerfectToggle"><span></span></label>
-            </label>
-            <p class="hint">Makes Record Video and the Live HTML File loop with no visible jump cut, instead of just cutting off wherever the clock runs out.</p>
-            <label class="control-label-row" id="wallpaperLoopLengthRow" hidden><span>Loop length</span><span id="wallpaperLoopLengthValue" class="control-value">6s</span></label>
-            <input type="range" id="wallpaperLoopLengthSlider" min="2" max="12" value="6" class="slider" hidden>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label control-label-row"><span>Time-of-day tint</span>
+            <label class="control-label-row wp-toggle"><span>Tint by time of day</span>
               <label class="oklch-switch"><input type="checkbox" id="wallpaperTimeOfDayToggle"><span></span></label>
             </label>
-            <p class="hint">Colors drift warmer near dawn/dusk and cooler through the day, based on the viewer's own clock — live in the preview, and in the Live HTML File wherever it's played.</p>
+            <button id="btnRemixWallpaper" class="btn btn-sm">🔀 Surprise effects</button>
           </div>
 
           <div class="control-card">
-            <label class="control-label control-label-row"><span>Tilt parallax (Live HTML File)</span>
+            <label class="control-label">Layer a second style</label>
+            <select id="wallpaperOverlayStyle" class="select" aria-label="Second style"></select>
+            <div id="wallpaperOverlayControls" hidden>
+              <div class="wp-param">
+                <label class="control-label-row wp-param-label" for="wallpaperOverlayOpacity"><span>Strength</span><span id="wallpaperOverlayOpacityValue" class="control-value">50%</span></label>
+                <input type="range" id="wallpaperOverlayOpacity" min="5" max="100" value="50" class="slider">
+              </div>
+              <div class="wp-field">
+                <span class="wp-save-label">Blend</span>
+                <select id="wallpaperOverlayBlend" class="select">
+                  <option value="soft-light">Soft light</option>
+                  <option value="overlay">Overlay</option>
+                  <option value="screen">Screen</option>
+                  <option value="multiply">Multiply</option>
+                  <option value="source-over">Normal</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="control-card">
+            <div class="control-label-row">
+              <label class="control-label">Looks</label>
+              <button id="btnSaveWallpaperLook" class="btn btn-sm">★ Save this look</button>
+            </div>
+            <div id="wallpaperLooksGrid" class="wp-looks"></div>
+          </div>
+
+          <div class="control-card">
+            <label class="control-label">Touch &amp; motion</label>
+            <p class="hint">Works in the preview and full screen.</p>
+            <label class="control-label-row wp-toggle"><span>Tap for ripples</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperTapRipple" checked><span></span></label>
+            </label>
+            <label class="control-label-row wp-toggle"><span>Double-tap to pause</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperDoubleTapPause" checked><span></span></label>
+            </label>
+            <label class="control-label-row wp-toggle"><span>Shake for a new look</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperShakeRandomize"><span></span></label>
+            </label>
+            <label class="control-label-row wp-toggle"><span>Tilt for depth</span>
               <label class="oklch-switch"><input type="checkbox" id="wallpaperParallaxToggle"><span></span></label>
             </label>
-            <p class="hint">Uses the phone's tilt sensor to shift the scene slightly for a sense of depth. Applies to the exported Live HTML File on a real device — there's no tilt sensor to preview in-browser.</p>
           </div>
 
           <div class="control-card">
-            <label class="control-label">Chapters</label>
-            <p class="hint" style="margin-top:-4px;">Save a few looks for different times of day. With Auto-apply on, opening Gradii switches to whichever chapter matches right now — this checks when the app opens, not in the background while it's closed (true background rotation needs a native OS feature this build doesn't include yet).</p>
-            <div id="wallpaperChaptersList" class="chapters-list"></div>
-            <div class="preview-actions" style="margin-top:8px;">
-              <input type="text" id="chapterNameInput" class="text-input" placeholder="Name (e.g. Morning)" style="flex:1;">
-              <input type="number" id="chapterHourInput" class="text-input" placeholder="Hr" min="0" max="23" style="width:56px;" title="Start hour, 24h clock">
-              <button id="btnAddChapter" class="btn btn-sm">+ Add from Current</button>
-            </div>
-            <label class="control-label control-label-row" style="margin-top:10px;"><span>Auto-apply on open</span>
-              <label class="oklch-switch"><input type="checkbox" id="wallpaperChaptersAutoToggle"><span></span></label>
+            <label class="control-label">Phone screen</label>
+            <label class="control-label-row wp-toggle"><span>Show clock &amp; icon areas</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperSafeZoneToggle"><span></span></label>
             </label>
-            <button id="btnCheckChapterNow" class="btn btn-sm" style="margin-top:8px;">🕐 Check Now</button>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label">Recipe</label>
-            <p class="hint" style="margin-top:-4px;">Save the pattern, colors, and effects as a small file, or load one back in — handy for reusing a look across sessions.</p>
-            <div class="preview-actions">
-              <button id="btnExportWallpaperRecipe" class="btn btn-sm">⬇ Save Recipe</button>
-              <button id="btnImportWallpaperRecipe" class="btn btn-sm">⬆ Load Recipe</button>
-              <input type="file" id="wallpaperRecipeFileInput" accept="application/json" hidden>
-            </div>
-            <button id="btnExtractPaletteFromWallpaper" class="btn btn-sm" style="margin-top:8px;">🎨 Extract Palette from This</button>
-          </div>
-
-          <div class="control-card">
-            <label class="control-label">More variations</label>
-
-            <p class="hint" style="margin-top:-4px;">Re-roll the effects only, keeping your current colors and pattern.</p>
-            <button id="btnRemixWallpaper" class="btn btn-sm">🔀 Remix Effects</button>
-
-            <p class="hint" style="margin-top:12px;">Generate several randomized versions at once and pick a favorite offline.</p>
-            <div class="preview-actions">
-              <input type="number" id="wallpaperBatchCount" class="text-input" style="width:64px;" min="2" max="12" value="6" title="How many variations">
-              <button id="btnBatchExportWallpaper" class="btn btn-sm">📦 Batch Export (.zip)</button>
-            </div>
-
-            <p class="hint" style="margin-top:12px;">Splits one wide export cleanly across multiple monitors.</p>
-            <div class="preview-actions">
-              <select id="wallpaperMonitorCount" class="select" style="width:auto;">
-                <option value="2">2 monitors</option>
-                <option value="3">3 monitors</option>
+            <label class="control-label-row wp-toggle"><span>True black (saves OLED battery)</span>
+              <label class="oklch-switch"><input type="checkbox" id="wallpaperAmoledToggle"><span></span></label>
+            </label>
+            <div class="wp-field">
+              <span class="wp-save-label">On open ⭐</span>
+              <select id="wallpaperOnOpenSelect" class="select">
+                <option value="off">Keep it as is</option>
+                <option value="daily">New look each day</option>
+                <option value="seasonal">Match the season</option>
               </select>
-              <button id="btnMultiMonitorExport" class="btn btn-sm">🖥️🖥️ Export Multi-Monitor</button>
             </div>
           </div>
+
+          <details class="control-card wp-more">
+            <summary class="control-label more-options-summary">More exports ⭐ ▾</summary>
+            <div class="more-options-body">
+              <div class="wp-field">
+                <input type="number" id="wallpaperBatchCount" class="text-input" style="width:64px;" min="2" max="12" value="6" aria-label="How many variations">
+                <button id="btnBatchExportWallpaper" class="btn btn-sm">📦 Variations (.zip)</button>
+              </div>
+              <div class="wp-field">
+                <select id="wallpaperMonitorCount" class="select" style="width:auto;" aria-label="Monitors">
+                  <option value="2">2 monitors</option>
+                  <option value="3">3 monitors</option>
+                </select>
+                <button id="btnMultiMonitorExport" class="btn btn-sm">🖥 Span monitors</button>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
     </section>
@@ -724,6 +700,14 @@
     <span>Extract</span>
   </button>
 </nav>
+
+<div id="videoProgressOverlay" class="command-overlay video-progress-overlay" hidden>
+  <div class="command-box video-progress-box" role="dialog" aria-modal="true" aria-labelledby="videoProgressLabel">
+    <p id="videoProgressLabel" class="video-progress-label">Recording…</p>
+    <div class="video-progress-track"><div id="videoProgressBar" class="video-progress-bar"></div></div>
+    <button id="btnCancelVideo" class="btn btn-sm">Cancel</button>
+  </div>
+</div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <div id="offlineIndicator" class="offline-indicator" hidden>📡 Offline — showing the last saved version of the app</div>
@@ -847,7 +831,8 @@
       <ul class="pro-features">
         <li>No "Made with Gradii" watermark on exports</li>
         <li>4K/8K and every resolution preset</li>
-        <li>Aurora Bento theme, unlocked</li>
+        <li>Every wallpaper style, 15s &amp; 30s live wallpapers</li>
+        <li>Pro themes, unlocked</li>
         <li>Unlimited saved palettes</li>
       </ul>
       <a id="proUpiLink" class="btn btn-primary pro-pay-btn" href="upi://pay?pa=pbadhniwalla@okaxis&pn=Gradii&am=39&cu=INR&tn=Gradii%20Pro" target="_blank" rel="noopener">Pay ₹39 via GPay / UPI</a>

@@ -1257,26 +1257,7 @@ details[open] .more-options-summary { padding-bottom: 8px; }
 }
 .recent-thumb:hover { transform: scale(1.1); }
 
-.chapters-list { display: flex; flex-direction: column; gap: 8px; }
-/* Same fix as .seed-row .text-input above: an inline flex:1 alone doesn't
-   stop this input's intrinsic ~20-char width from blowing out the mobile
-   grid track; needs an explicit width: 0 too. */
-#chapterNameInput { min-width: 0; width: 0; }
-.chapter-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-}
-.chapter-item-swatch { width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0; }
-.chapter-item-info { flex: 1; min-width: 0; font-size: 0.82rem; }
-.chapter-item-name { font-weight: 700; }
-.chapter-item-time { color: var(--text-muted); font-size: 0.74rem; }
-.chapter-item-remove { border: none; background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0; }
-.chapter-item-remove:hover { color: #ff5c72; }
+
 
 .offline-indicator {
   position: fixed;
@@ -1503,11 +1484,12 @@ details[open] .more-options-summary { padding-bottom: 8px; }
   background: none;
 }
 
-.wallpaper-color-remove {
+.wallpaper-color-remove,
+.wallpaper-color-lock {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  width: 18px; height: 18px;
+  width: 26px; height: 26px;
   border-radius: 50%;
   cursor: pointer;
   font-size: 0.65rem;
@@ -2319,3 +2301,115 @@ details[open] .more-options-summary { padding-bottom: 8px; }
    pushing past the card edge (seen with Paint Chip's wide uppercase
    labels at 320px). */
 .control-card .btn { white-space: normal; max-width: 100%; }
+
+/* ==========================================================================
+   Wallpaper studio (2026)
+   ========================================================================== */
+.wp-primary-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.wp-primary-row .btn { width: 100%; }
+.wallpaper-color-lock { font-size: 0.72rem; }
+.wallpaper-color-chip.locked { box-shadow: inset 0 0 0 2px var(--accent); }
+.wallpaper-color-chip:first-child input[type="color"] { border-radius: 7px; }
+
+.wp-size-row { display: flex; align-items: center; gap: 10px; }
+.wp-size-row .select { flex: 1; min-width: 0; }
+.wp-save { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.wp-save-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wp-save-label { font-size: 0.78rem; font-weight: 700; color: var(--text-muted); min-width: 64px; }
+.wp-length { flex: 1 1 200px; min-width: 0; }
+.wp-length .seg-btn { padding: 8px 4px; font-size: 0.8rem; }
+.wp-save-hint { margin: 0; }
+
+.wp-cats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 12px; padding-bottom: 2px; }
+.wp-cats::-webkit-scrollbar { display: none; }
+.wp-cat { flex-shrink: 0; }
+.wp-style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 10px; }
+.wp-style {
+  position: relative;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text);
+  font: 600 0.74rem var(--font-ui);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  min-width: 0;
+}
+.wp-style canvas {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.wp-style span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp-style:hover canvas { transform: translateY(-2px); }
+.wp-style.active canvas { box-shadow: 0 0 0 3px var(--accent); }
+.wp-style:focus-visible { outline: none; }
+.wp-style:focus-visible canvas { box-shadow: 0 0 0 3px var(--accent), 0 0 0 5px var(--bg-alt); }
+.wp-pro {
+  position: absolute;
+  top: 6px; right: 6px;
+  font: 700 0.6rem var(--font-ui);
+  font-style: normal;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+
+.wp-param { margin-top: 4px; }
+.wp-param-label { margin-bottom: 0; font-size: 0.84rem; font-weight: 600; color: var(--text); }
+.wp-param .slider { margin: 8px 0 10px; }
+.wp-field { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.wp-field .select { flex: 1; min-width: 0; width: auto; }
+.wp-field .segmented { flex: 1; min-width: 0; }
+.wp-field .segmented .seg-btn { padding: 8px 4px; font-size: 0.8rem; }
+.wp-toggle { font-size: 0.88rem; font-weight: 600; color: var(--text); margin: 12px 0 0; min-height: 32px; }
+.control-card > .wp-toggle:first-of-type { margin-top: 4px; }
+#btnRemixWallpaper { margin-top: 14px; }
+
+.wp-looks { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 10px; }
+.wp-look { position: relative; border: none; background: none; padding: 0; cursor: pointer; color: var(--text); font: 600 0.7rem var(--font-ui); display: flex; flex-direction: column; gap: 5px; text-align: left; min-width: 0; }
+.wp-look canvas { width: 100%; height: auto; aspect-ratio: 2 / 3; border-radius: var(--radius-sm); box-shadow: 0 0 0 1px var(--border); display: block; }
+.wp-look span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp-look-open { border: none; padding: 0; background: none; cursor: pointer; display: block; width: 100%; }
+.wp-look-del {
+  position: absolute; top: 4px; right: 4px;
+  width: 24px; height: 24px; border-radius: 50%;
+  border: none; background: rgba(0,0,0,0.55); color: #fff; font-size: 0.66rem; cursor: pointer;
+}
+.wp-look:not(.wp-look-pack) canvas { box-shadow: 0 0 0 2px var(--accent); }
+
+.video-progress-overlay { align-items: center; padding-top: 16px; }
+.video-progress-box { max-width: 420px; padding: 20px; display: flex; flex-direction: column; gap: 14px; align-items: stretch; }
+.video-progress-label { margin: 0; font-weight: 600; }
+.video-progress-track { height: 8px; border-radius: 999px; background: var(--bg-soft); overflow: hidden; }
+.video-progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.2s linear; }
+.video-progress-box .btn { align-self: flex-end; }
+@media (max-width: 400px) {
+  .wp-primary-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .wp-primary-row .btn-primary { grid-column: 1 / -1; }
+  .wp-save-label { min-width: 0; }
+}
+.fx-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  display: block;
+}
+.fullscreen-content { position: relative; }
+/* Wallpaper exists to be saved: on phones/portrait tablets its save block
+   sits right under Randomize instead of after every setting. */
+@media (max-width: 899px) {
+  .wallpaper-studio .export-block { order: 1; }
+}
